@@ -14,6 +14,8 @@ public class MacOsPackagingTests
         Assert.True(File.Exists(Path.Combine(repoRoot, "packaging", "icons", "app-icon.ico")));
         Assert.True(File.Exists(Path.Combine(repoRoot, "packaging", "icons", "app-icon.png")));
         Assert.True(File.Exists(Path.Combine(repoRoot, "packaging", "icons", "AppIcon.icns")));
+        Assert.True(File.Exists(Path.Combine(repoRoot, "packaging", "macos", "AppIcon.icon", "icon.json")));
+        Assert.True(File.Exists(Path.Combine(repoRoot, "packaging", "macos", "AppIcon.icon", "Assets", "glyph.png")));
         Assert.True(File.Exists(Path.Combine(repoRoot, "scripts", "generate-app-icons.py")));
         Assert.True(File.Exists(Path.Combine(repoRoot, "scripts", "package-macos-app.sh")));
         Assert.True(File.Exists(Path.Combine(repoRoot, "scripts", "ensure-dotnet8-sdk.sh")));

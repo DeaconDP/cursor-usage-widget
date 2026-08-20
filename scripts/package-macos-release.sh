@@ -94,6 +94,9 @@ printf 'APPL????' > "$APP_PATH/Contents/PkgInfo"
 if [[ -f "$REPO_ROOT/packaging/icons/AppIcon.icns" ]]; then
     cp "$REPO_ROOT/packaging/icons/AppIcon.icns" "$APP_PATH/Contents/Resources/AppIcon.icns"
 fi
+if [[ -d "$REPO_ROOT/packaging/macos/AppIcon.icon" ]]; then
+    cp -R "$REPO_ROOT/packaging/macos/AppIcon.icon" "$APP_PATH/Contents/Resources/"
+fi
 cp "$UNIVERSAL_HOST" "$APP_PATH/Contents/MacOS/$APP_NAME"
 chmod +x "$APP_PATH/Contents/MacOS/$APP_NAME"
 
