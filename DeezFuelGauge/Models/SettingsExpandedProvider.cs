@@ -9,6 +9,7 @@ public enum SettingsExpandedProvider
     OpenRouter,
     OpenCode,
     Fal,
+    Xai,
     GrokBot,
     Disk,
     Hardware,

@@ -22,6 +22,7 @@ public sealed class WidgetViewModel
     public ProviderSectionViewModel OpenRouter { get; } = new() { Title = "OpenRouter" };
     public ProviderSectionViewModel OpenCode { get; } = new() { Title = "OpenCode" };
     public ProviderSectionViewModel Fal { get; } = new() { Title = "fal.ai" };
+    public ProviderSectionViewModel Xai { get; } = new() { Title = "xAI" };
     public ProviderSectionViewModel GrokBot { get; } = new() { Title = "Grok Bot" };
 
     public DateTimeOffset? LastRefreshedAt { get; set; }
@@ -75,6 +76,7 @@ public sealed class WidgetViewModel
         OpenRouter.DegradedMessage = null;
         OpenCode.DegradedMessage = null;
         Fal.DegradedMessage = null;
+        Xai.DegradedMessage = null;
         GrokBot.DegradedMessage = null;
     }
 
@@ -86,6 +88,7 @@ public sealed class WidgetViewModel
         OpenRouter.UnusedQuotaMessage = null;
         OpenCode.UnusedQuotaMessage = null;
         Fal.UnusedQuotaMessage = null;
+        Xai.UnusedQuotaMessage = null;
         GrokBot.UnusedQuotaMessage = null;
     }
 
@@ -110,6 +113,9 @@ public sealed class WidgetViewModel
                 break;
             case "fal":
                 Fal.UnusedQuotaMessage = message;
+                break;
+            case "xai":
+                Xai.UnusedQuotaMessage = message;
                 break;
             case "grokbot":
                 GrokBot.UnusedQuotaMessage = message;
@@ -136,6 +142,9 @@ public sealed class WidgetViewModel
                 break;
             case "fal":
                 Fal.DegradedMessage = message;
+                break;
+            case "xai":
+                Xai.DegradedMessage = message;
                 break;
             case "grokbot":
                 GrokBot.DegradedMessage = message;

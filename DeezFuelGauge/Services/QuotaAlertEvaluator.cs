@@ -151,6 +151,25 @@ public static class QuotaAlertEvaluator
                 "OpenCode Go monthly");
         }
 
+        if (alerts.ClaudeExtraUsageMonthly
+            && settings.Claude.ShowProLimits
+            && snapshot.ClaudePro.IsAvailable
+            && snapshot.ClaudePro.ExtraUsageIsAvailable)
+        {
+            var claudeMonthlyEnd = snapshot.ClaudePro.ExtraUsageResetsAt ?? utcMonthEnd;
+            TryAdd(
+                results,
+                true,
+                true,
+                snapshot.ClaudePro.ExtraUsagePercentUsed,
+                claudeMonthlyEnd,
+                evaluatedAt,
+                alerts,
+                "claude-extra-usage-monthly",
+                "claude",
+                "Claude monthly spend");
+        }
+
         if (alerts.FalBalance
             && settings.Fal.ShowProLimits
             && snapshot.Fal.IsAvailable
@@ -165,6 +184,22 @@ public static class QuotaAlertEvaluator
                 snapshot.Fal.HeadlinePercentUsed,
                 0,
                 $"fal.ai: {balanceLabel} · {percentLabel}%"));
+        }
+
+        if (alerts.XaiBalance
+            && settings.Xai.ShowProLimits
+            && snapshot.Xai.IsAvailable
+            && snapshot.Xai.HeadlinePercentUsed >= alerts.MaxPercentUsed)
+        {
+            var balanceLabel = snapshot.Xai.DetailLabel;
+            var percentLabel = Math.Round(snapshot.Xai.HeadlinePercentUsed).ToString(CultureInfo.InvariantCulture);
+            results.Add(new QuotaAlert(
+                "xai-balance",
+                "xai",
+                "xAI credits",
+                snapshot.Xai.HeadlinePercentUsed,
+                0,
+                $"xAI: {balanceLabel} · {percentLabel}%"));
         }
 
         if (alerts.GrokBotWeekly

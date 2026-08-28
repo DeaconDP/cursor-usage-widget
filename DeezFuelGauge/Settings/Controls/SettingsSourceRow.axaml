@@ -144,7 +144,7 @@
                          FontSize="9"
                          Text="{Binding Budget}"
                          IsVisible="{Binding ShowStandaloneBudgetField}" />
-                <TextBox Watermark="Workspace ID"
+                <TextBox Watermark="{Binding WorkspaceWatermark}"
                          FontSize="9"
                          Text="{Binding WorkspaceId}"
                          IsVisible="{Binding ShowWorkspaceField}" />

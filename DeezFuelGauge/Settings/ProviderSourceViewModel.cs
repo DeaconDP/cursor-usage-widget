@@ -13,6 +13,7 @@ public sealed class ProviderSourceViewModel : ViewModelBase
     private string _orgId = "";
     private string _budget = "";
     private string _workspaceId = "";
+    private string _workspaceWatermark = "Workspace ID";
     private string _apiKeyWatermark = "";
     private string _managementApiKeyWatermark = "";
     private string _sessionWatermark = "";
@@ -113,6 +114,12 @@ public sealed class ProviderSourceViewModel : ViewModelBase
     {
         get => _workspaceId;
         set => SetProperty(ref _workspaceId, value);
+    }
+
+    public string WorkspaceWatermark
+    {
+        get => _workspaceWatermark;
+        set => SetProperty(ref _workspaceWatermark, value);
     }
 
     public string ApiKeyWatermark

@@ -48,6 +48,12 @@ public sealed class ProviderBillingSettings
 
     public string? LastConnectionStatus { get; set; }
 
+    /// <summary>Prepaid tank size after last observed top-up (or first balance).</summary>
+    public double? CreditBaselineUsd { get; set; }
+
+    /// <summary>Last remaining credit balance observed; used to detect top-ups.</summary>
+    public double? LastObservedBalanceUsd { get; set; }
+
     [JsonIgnore]
     public bool IsVisible
     {

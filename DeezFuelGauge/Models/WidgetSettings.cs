@@ -19,6 +19,7 @@ public sealed class WidgetSettings
     public bool IsOpenRouterProviderExpanded { get; set; }
     public bool IsOpenCodeProviderExpanded { get; set; }
     public bool IsFalProviderExpanded { get; set; }
+    public bool IsXaiProviderExpanded { get; set; }
     public ProviderBillingSettings Cursor { get; set; } = new();
     public ProviderBillingSettings OpenAi { get; set; } = new();
     public ProviderBillingSettings Claude { get; set; } = new();
@@ -26,6 +27,7 @@ public sealed class WidgetSettings
     public ProviderBillingSettings OpenRouter { get; set; } = new();
     public ProviderBillingSettings OpenCode { get; set; } = new();
     public ProviderBillingSettings Fal { get; set; } = new();
+    public ProviderBillingSettings Xai { get; set; } = new();
     public ProviderBillingSettings GrokBot { get; set; } = new() { ShowProLimits = true };
     public bool ShowBreakdown { get; set; } = true;
     public bool ShowDiskDrives { get; set; } = true;

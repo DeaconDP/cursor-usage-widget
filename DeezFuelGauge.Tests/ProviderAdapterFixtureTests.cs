@@ -50,4 +50,16 @@ public sealed class ProviderAdapterFixtureTests
         Assert.Equal(12.5, snapshot.BalanceUsd);
         Assert.Equal(0, snapshot.HeadlinePercentUsed);
     }
+
+    [Fact]
+    public void Xai_adapter_fixture_contract()
+    {
+        const string json = """{"total":{"val":"-1250"}}""";
+        using var document = JsonDocument.Parse(json);
+        var snapshot = XaiUsageClient.ParseBalanceResponse(document.RootElement);
+
+        Assert.True(snapshot.IsAvailable);
+        Assert.Equal(12.5, snapshot.BalanceUsd);
+        Assert.Equal(0, snapshot.HeadlinePercentUsed);
+    }
 }

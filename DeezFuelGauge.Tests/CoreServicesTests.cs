@@ -65,6 +65,14 @@ public sealed class ProviderHealthPresenterTests
         var message = ProviderHealthPresenter.FormatDegradedMessage("codex", "timeout");
         Assert.Contains("Codex", message);
         Assert.Contains("unavailable", message);
+        Assert.Contains("timeout", message);
+    }
+
+    [Fact]
+    public void FormatDegradedMessage_falls_back_when_detail_missing()
+    {
+        var message = ProviderHealthPresenter.FormatDegradedMessage("xai", null);
+        Assert.Equal("xAI unavailable — API may have changed", message);
     }
 }
 

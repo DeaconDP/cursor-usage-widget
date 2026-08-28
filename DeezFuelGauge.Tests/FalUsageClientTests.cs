@@ -33,27 +33,92 @@ public sealed class FalUsageClientTests
     }
 
     [Theory]
-    [InlineData(0, 100)]
-    [InlineData(0.5, 95)]
-    [InlineData(1, 95)]
-    [InlineData(3, 75)]
-    [InlineData(5, 75)]
-    [InlineData(8, 50)]
-    [InlineData(10, 50)]
-    [InlineData(25, 0)]
-    public void ComputeHeadlinePercent_matches_zen_balance_heuristic(double balance, double expected)
+    [InlineData(25, 25, 0)]
+    [InlineData(25, 21.82, 12.72)]
+    [InlineData(25, 0, 100)]
+    [InlineData(26, 26, 0)]
+    public void ComputePercentUsed_uses_baseline(double baseline, double balance, double expected)
     {
-        Assert.Equal(expected, FalSnapshot.ComputeHeadlinePercent(balance));
+        Assert.Equal(expected, PrepaidCreditBaselineTracker.ComputePercentUsed(baseline, balance), 2);
+    }
+
+    [Fact]
+    public void Update_seeds_baseline_on_first_observe()
+    {
+        var settings = new ProviderBillingSettings();
+
+        var percent = PrepaidCreditBaselineTracker.Update(settings, 25);
+
+        Assert.Equal(0, percent);
+        Assert.Equal(25, settings.CreditBaselineUsd);
+        Assert.Equal(25, settings.LastObservedBalanceUsd);
+    }
+
+    [Fact]
+    public void Update_keeps_baseline_while_spending()
+    {
+        var settings = new ProviderBillingSettings
+        {
+            CreditBaselineUsd = 25,
+            LastObservedBalanceUsd = 25
+        };
+
+        var percent = PrepaidCreditBaselineTracker.Update(settings, 21.82);
+
+        Assert.Equal(12.72, percent, 2);
+        Assert.Equal(25, settings.CreditBaselineUsd);
+        Assert.Equal(21.82, settings.LastObservedBalanceUsd);
+    }
+
+    [Fact]
+    public void Update_raises_baseline_on_top_up()
+    {
+        var settings = new ProviderBillingSettings
+        {
+            CreditBaselineUsd = 25,
+            LastObservedBalanceUsd = 1
+        };
+
+        var percent = PrepaidCreditBaselineTracker.Update(settings, 26);
+
+        Assert.Equal(0, percent);
+        Assert.Equal(26, settings.CreditBaselineUsd);
+        Assert.Equal(26, settings.LastObservedBalanceUsd);
+    }
+
+    [Fact]
+    public void Update_ignores_sub_epsilon_jitter()
+    {
+        var settings = new ProviderBillingSettings
+        {
+            CreditBaselineUsd = 25,
+            LastObservedBalanceUsd = 21.82
+        };
+
+        var percent = PrepaidCreditBaselineTracker.Update(settings, 21.824);
+
+        Assert.Equal(12.704, percent, 2);
+        Assert.Equal(25, settings.CreditBaselineUsd);
+        Assert.Equal(21.824, settings.LastObservedBalanceUsd);
     }
 
     [Fact]
     public void FromBalance_empty_tank_when_zero()
     {
-        var snapshot = FalSnapshot.FromBalance(0);
+        var settings = new ProviderBillingSettings
+        {
+            CreditBaselineUsd = 25,
+            LastObservedBalanceUsd = 1
+        };
+        var percent = PrepaidCreditBaselineTracker.Update(settings, 0);
+        var snapshot = FalSnapshot.FromBalance(0, percentUsed: percent);
 
         Assert.True(snapshot.IsAvailable);
+        Assert.Equal(100, percent);
         Assert.Equal(100, snapshot.HeadlinePercentUsed);
         Assert.Equal("$0.00 left", snapshot.DetailLabel);
+        Assert.Equal(25, settings.CreditBaselineUsd);
+        Assert.Equal(0, settings.LastObservedBalanceUsd);
     }
 
     [Fact]
@@ -93,14 +158,18 @@ public sealed class FalUsageClientTests
             var settings = new ProviderBillingSettings
             {
                 ShowProLimits = true,
-                CredentialId = credentialId
+                CredentialId = credentialId,
+                CreditBaselineUsd = 10,
+                LastObservedBalanceUsd = 10
             };
 
             var snapshot = await client.FetchAsync(settings);
 
             Assert.True(snapshot.IsAvailable);
             Assert.Equal(4.2, snapshot.BalanceUsd);
-            Assert.Equal(75, snapshot.HeadlinePercentUsed);
+            Assert.Equal(58, snapshot.HeadlinePercentUsed, 0);
+            Assert.Equal(10, settings.CreditBaselineUsd);
+            Assert.Equal(4.2, settings.LastObservedBalanceUsd);
             Assert.Equal("Connected", settings.LastConnectionStatus);
         }
         finally
@@ -110,7 +179,21 @@ public sealed class FalUsageClientTests
     }
 
     [Fact]
-    public async Task TestConnectionAsync_reports_forbidden_as_non_admin()
+    public async Task TestConnectionAsync_reports_unauthorized_as_revoked_key()
+    {
+        var handler = new RecordingHandler(_ =>
+            new HttpResponseMessage(HttpStatusCode.Unauthorized));
+
+        using var client = new FalUsageClient(new HttpClient(handler));
+        var status = await client.TestConnectionAsync("bad-key");
+
+        Assert.Equal(
+            "Invalid or revoked Admin API key — create a new one at fal.ai/dashboard/keys",
+            status);
+    }
+
+    [Fact]
+    public async Task TestConnectionAsync_reports_forbidden_as_admin_scope_required()
     {
         var handler = new RecordingHandler(_ =>
             new HttpResponseMessage(HttpStatusCode.Forbidden));
@@ -118,7 +201,39 @@ public sealed class FalUsageClientTests
         using var client = new FalUsageClient(new HttpClient(handler));
         var status = await client.TestConnectionAsync("bad-key");
 
-        Assert.Equal("Invalid or non-Admin API key", status);
+        Assert.Equal(
+            "Admin scope required for billing — check key scope and account/team in the fal dashboard",
+            status);
+    }
+
+    [Fact]
+    public async Task TestConnectionAsync_reports_rate_limited()
+    {
+        var handler = new RecordingHandler(_ =>
+            new HttpResponseMessage((HttpStatusCode)429));
+
+        using var client = new FalUsageClient(new HttpClient(handler));
+        var status = await client.TestConnectionAsync("key");
+
+        Assert.Equal("Rate limited — wait a moment and try again", status);
+    }
+
+    [Fact]
+    public async Task TestConnectionAsync_surfaces_json_error_message()
+    {
+        var handler = new RecordingHandler(_ =>
+            new HttpResponseMessage(HttpStatusCode.Forbidden)
+            {
+                Content = new StringContent(
+                    """{"error":{"type":"authorization_error","message":"Access denied"}}""",
+                    Encoding.UTF8,
+                    "application/json")
+            });
+
+        using var client = new FalUsageClient(new HttpClient(handler));
+        var status = await client.TestConnectionAsync("key");
+
+        Assert.Equal("Access denied", status);
     }
 
     private sealed class AlwaysOkHandler : HttpMessageHandler
