@@ -159,15 +159,114 @@ public sealed class ClaudeProUsageClient : IDisposable
         var weeklyPercent = ParseWindowPercent(root, "seven_day");
         var sessionResetsAt = ParseWindowReset(root, "five_hour");
         var weeklyResetsAt = ParseWindowReset(root, "seven_day");
+        var extraUsage = ParseExtraUsage(root);
 
-        if (sessionPercent is null && weeklyPercent is null)
+        if (sessionPercent is null && weeklyPercent is null && extraUsage is null)
             return ClaudeProSnapshot.Unavailable("No Pro quota");
 
-        return ClaudeProSnapshot.FromUsage(
+        return BuildSnapshot(
             sessionPercent ?? 0,
             weeklyPercent ?? 0,
             sessionResetsAt,
-            weeklyResetsAt);
+            weeklyResetsAt,
+            extraUsage);
+    }
+
+    internal static ClaudeExtraUsageData? ParseExtraUsage(JsonElement root)
+    {
+        if (!root.TryGetProperty("extra_usage", out var extra) || extra.ValueKind != JsonValueKind.Object)
+            return null;
+
+        if (extra.TryGetProperty("is_enabled", out var enabledEl)
+            && enabledEl.ValueKind is JsonValueKind.False)
+            return null;
+
+        var limitCents = ReadCents(extra, "monthly_limit");
+        var usedCents = ReadCents(extra, "used_credits");
+        var percentRaw = ReadExtraUsagePercent(extra, usedCents, limitCents);
+
+        if (percentRaw is null && usedCents is null && limitCents is null)
+            return null;
+
+        return new ClaudeExtraUsageData(
+            IsEnabled: true,
+            UsedUsd: CentsToUsd(usedCents),
+            LimitUsd: CentsToUsd(limitCents),
+            PercentRaw: percentRaw ?? 0,
+            OutOfCredits: false,
+            DisabledUntil: null);
+    }
+
+    internal static ClaudeExtraUsageData? ParseOverageSpendLimit(JsonElement root)
+    {
+        if (root.TryGetProperty("is_enabled", out var enabledEl)
+            && enabledEl.ValueKind is JsonValueKind.False)
+            return null;
+
+        var limitCents = ReadCents(root, "monthly_credit_limit");
+        var usedCents = ReadCents(root, "used_credits");
+        var percentRaw = ComputePercentFromSpend(usedCents, limitCents);
+
+        if (percentRaw is null && usedCents is null && limitCents is null)
+            return null;
+
+        var outOfCredits = root.TryGetProperty("out_of_credits", out var outEl)
+                           && outEl.ValueKind is JsonValueKind.True;
+
+        return new ClaudeExtraUsageData(
+            IsEnabled: true,
+            UsedUsd: CentsToUsd(usedCents),
+            LimitUsd: CentsToUsd(limitCents),
+            PercentRaw: percentRaw ?? (outOfCredits ? 100 : 0),
+            OutOfCredits: outOfCredits,
+            DisabledUntil: ParseIsoTimestamp(root, "disabled_until"));
+    }
+
+    internal static ClaudeProSnapshot MergeExtraUsage(
+        ClaudeProSnapshot snapshot,
+        ClaudeExtraUsageData? overage)
+    {
+        if (overage is not { IsEnabled: true } data)
+            return snapshot;
+
+        return snapshot.WithMergedExtraUsage(
+            data.IsEnabled,
+            data.PercentRaw,
+            data.UsedUsd,
+            data.LimitUsd,
+            data.OutOfCredits,
+            data.DisabledUntil,
+            BillingPeriodHelper.CurrentCalendarMonthEndUtc());
+    }
+
+    private static ClaudeProSnapshot BuildSnapshot(
+        double sessionPercent,
+        double weeklyPercent,
+        DateTimeOffset? sessionResetsAt,
+        DateTimeOffset? weeklyResetsAt,
+        ClaudeExtraUsageData? extraUsage)
+    {
+        if (extraUsage is not { IsEnabled: true } data)
+        {
+            return ClaudeProSnapshot.FromUsage(
+                sessionPercent,
+                weeklyPercent,
+                sessionResetsAt,
+                weeklyResetsAt);
+        }
+
+        return ClaudeProSnapshot.FromUsage(
+            sessionPercent,
+            weeklyPercent,
+            sessionResetsAt,
+            weeklyResetsAt,
+            extraUsageIsAvailable: true,
+            extraUsagePercentRaw: data.PercentRaw,
+            extraUsageUsedUsd: data.UsedUsd,
+            extraUsageLimitUsd: data.LimitUsd,
+            extraUsageOutOfCredits: data.OutOfCredits,
+            extraUsageDisabledUntil: data.DisabledUntil,
+            extraUsageResetsAt: BillingPeriodHelper.CurrentCalendarMonthEndUtc());
     }
 
     private async Task<ClaudeProSnapshot> FetchWithAuthAsync(
@@ -189,6 +288,23 @@ public sealed class ClaudeProUsageClient : IDisposable
             throw new ClaudeProUsageException("No organization found");
 
         return await FetchSessionUsageAsync(auth.SessionCookie, orgUuid, cancellationToken);
+    }
+
+    private async Task<ClaudeProSnapshot> EnrichSessionUsageAsync(
+        ClaudeProSnapshot snapshot,
+        string sessionValue,
+        string orgUuid,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var overage = await TryFetchOverageSpendLimitAsync(sessionValue, orgUuid, cancellationToken);
+            return overage is null ? snapshot : MergeExtraUsage(snapshot, overage);
+        }
+        catch
+        {
+            return snapshot;
+        }
     }
 
     private async Task<ClaudeProSnapshot> FetchAppOAuthUsageAsync(
@@ -232,6 +348,23 @@ public sealed class ClaudeProUsageClient : IDisposable
 
         using var document = JsonDocument.Parse(body);
         return ParseUsageResponse(document.RootElement);
+    }
+
+    private async Task<ClaudeExtraUsageData?> TryFetchOverageSpendLimitAsync(
+        string sessionValue,
+        string orgUuid,
+        CancellationToken cancellationToken)
+    {
+        using var request = CreateSessionRequest(
+            $"{BaseUrl}/api/organizations/{orgUuid}/overage_spend_limit",
+            sessionValue);
+        using var response = await _http.SendAsync(request, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+            return null;
+
+        var body = await response.Content.ReadAsStringAsync(cancellationToken);
+        using var document = JsonDocument.Parse(body);
+        return ParseOverageSpendLimit(document.RootElement);
     }
 
     private static double? ParseWindowPercent(JsonElement root, string propertyName)
@@ -287,7 +420,59 @@ public sealed class ClaudeProUsageClient : IDisposable
             throw ClaudeProUsageException.FromResponse(response.StatusCode, body);
 
         using var document = JsonDocument.Parse(body);
-        return ParseUsageResponse(document.RootElement);
+        var snapshot = ParseUsageResponse(document.RootElement);
+        return await EnrichSessionUsageAsync(snapshot, sessionValue, orgUuid, cancellationToken);
+    }
+
+    private static long? ReadCents(JsonElement parent, string propertyName)
+    {
+        if (!parent.TryGetProperty(propertyName, out var element) || element.ValueKind != JsonValueKind.Number)
+            return null;
+
+        if (element.TryGetInt64(out var value))
+            return value;
+
+        return element.TryGetDouble(out var floating) && double.IsFinite(floating)
+            ? (long)floating
+            : null;
+    }
+
+    private static decimal? CentsToUsd(long? cents) =>
+        cents is { } value ? value / 100m : null;
+
+    private static double? ReadExtraUsagePercent(JsonElement extra, long? usedCents, long? limitCents)
+    {
+        var computed = ComputePercentFromSpend(usedCents, limitCents);
+        if (computed is not null)
+            return computed;
+
+        if (extra.TryGetProperty("utilization", out var utilizationEl) && utilizationEl.ValueKind == JsonValueKind.Number)
+        {
+            var value = utilizationEl.GetDouble();
+            if (double.IsFinite(value))
+                return value * 100;
+        }
+
+        return null;
+    }
+
+    private static double? ComputePercentFromSpend(long? usedCents, long? limitCents)
+    {
+        if (usedCents is not { } used || limitCents is not > 0)
+            return null;
+
+        return used * 100.0 / limitCents;
+    }
+
+    private static DateTimeOffset? ParseIsoTimestamp(JsonElement parent, string propertyName)
+    {
+        if (!parent.TryGetProperty(propertyName, out var element) || element.ValueKind != JsonValueKind.String)
+            return null;
+
+        var text = element.GetString();
+        return DateTimeOffset.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var parsed)
+            ? parsed
+            : null;
     }
 
     private static HttpRequestMessage CreateSessionRequest(string url, string sessionValue)
@@ -305,6 +490,14 @@ public sealed class ClaudeProUsageClient : IDisposable
             _http.Dispose();
     }
 }
+
+internal readonly record struct ClaudeExtraUsageData(
+    bool IsEnabled,
+    decimal? UsedUsd,
+    decimal? LimitUsd,
+    double PercentRaw,
+    bool OutOfCredits,
+    DateTimeOffset? DisabledUntil);
 
 internal sealed class ClaudeProUsageException : Exception
 {

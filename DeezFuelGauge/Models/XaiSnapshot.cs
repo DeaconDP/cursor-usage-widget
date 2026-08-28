@@ -2,7 +2,7 @@ using System.Globalization;
 
 namespace DeezFuelGauge.Models;
 
-public sealed class FalSnapshot
+public sealed class XaiSnapshot
 {
     public double? BalanceUsd { get; init; }
     public string Currency { get; init; } = "USD";
@@ -11,14 +11,14 @@ public sealed class FalSnapshot
     public string? StatusMessage { get; init; }
     public string DetailLabel { get; init; } = "";
 
-    public static FalSnapshot Unavailable(string? message = null) => new()
+    public static XaiSnapshot Unavailable(string? message = null) => new()
     {
         IsAvailable = false,
         StatusMessage = message,
         DetailLabel = message ?? "—"
     };
 
-    public static FalSnapshot FromBalance(
+    public static XaiSnapshot FromBalance(
         double balanceUsd,
         string? currency = null,
         double? percentUsed = null)
@@ -30,7 +30,7 @@ public sealed class FalSnapshot
             ? $"${balanceUsd.ToString("F2", CultureInfo.InvariantCulture)} left"
             : $"{balanceUsd.ToString("F2", CultureInfo.InvariantCulture)} {currencyCode} left";
 
-        return new FalSnapshot
+        return new XaiSnapshot
         {
             IsAvailable = true,
             BalanceUsd = balanceUsd,

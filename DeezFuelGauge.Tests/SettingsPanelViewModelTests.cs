@@ -169,10 +169,11 @@ public sealed class SettingsPanelViewModelTests
         var viewModel = CreateViewModel();
         viewModel.Load(new WidgetSettings());
 
-        Assert.Equal(8, viewModel.Sections.Count);
+        Assert.Equal(9, viewModel.Sections.Count);
         Assert.Contains(viewModel.Sections, s => s.Title == "OpenAI" && s.Sources.Count == 2);
         Assert.Contains(viewModel.Sections, s => s.Title == "Claude" && s.Sources.Count == 2);
         Assert.Contains(viewModel.Sections, s => s.Title == "fal.ai" && s.Sources.Count == 1);
+        Assert.Contains(viewModel.Sections, s => s.Title == "xAI" && s.Sources.Count == 1);
         Assert.Contains(
             viewModel.Sections,
             s => s.Title == "Cursor"

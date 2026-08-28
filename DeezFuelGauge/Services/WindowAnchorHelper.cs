@@ -65,6 +65,12 @@ public static class WindowAnchorHelper
     public static int ComputeBottomAnchoredY(double anchorBottom, double height) =>
         (int)Math.Round(anchorBottom - height);
 
+    /// <summary>
+    /// End Y for settings expand/collapse: keep the current bottom edge fixed while height changes.
+    /// </summary>
+    public static int ResolveSettingsExpandEndY(int currentY, double currentHeight, double newHeight) =>
+        ComputeBottomAnchoredY(currentY + currentHeight, newHeight);
+
     public static (int X, int Y) ComputeCenteredPosition(
         int workAreaX,
         int workAreaY,

@@ -77,11 +77,9 @@ public static class CompactGlancePresenter
             "CL",
             snapshot.ClaudePro.IsAvailable,
             snapshot.ClaudePro.IsAvailable
-                ? ProviderLimitsPresenter.HeadlinePercent(
-                    snapshot.ClaudePro.SessionPercentUsed,
-                    snapshot.ClaudePro.WeeklyPercentUsed)
+                ? ProviderLimitsPresenter.ComputeClaudeProHeadline(snapshot.ClaudePro)
                 : null,
-            hasAlert: false);
+            HasAlert(alerts, "claude-extra-usage-monthly"));
         AddConnected(
             rows,
             settings.Claude.ShowApiConsoleBilling,
@@ -135,6 +133,13 @@ public static class CompactGlancePresenter
             snapshot.Fal.IsAvailable,
             snapshot.Fal.IsAvailable ? snapshot.Fal.HeadlinePercentUsed : null,
             HasAlert(alerts, "fal-balance"));
+        AddConnected(
+            rows,
+            settings.Xai.ShowProLimits,
+            "XA",
+            snapshot.Xai.IsAvailable,
+            snapshot.Xai.IsAvailable ? snapshot.Xai.HeadlinePercentUsed : null,
+            HasAlert(alerts, "xai-balance"));
         AddConnected(
             rows,
             settings.GrokBot.ShowProLimits,

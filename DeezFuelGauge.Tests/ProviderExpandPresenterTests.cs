@@ -19,6 +19,7 @@ public sealed class ProviderExpandPresenterTests
         Assert.False(state.OpenRouter);
         Assert.False(state.OpenCode);
         Assert.False(state.Fal);
+        Assert.False(state.Xai);
     }
 
     [Fact]
@@ -26,7 +27,7 @@ public sealed class ProviderExpandPresenterTests
     {
         var state = ProviderExpandPresenter.Toggle(
             ProviderSection.OpenAi,
-            new ProviderExpandState(false, true, false, false, false, false, false));
+            new ProviderExpandState(false, true, false, false, false, false, false, false));
 
         Assert.False(state.OpenAi);
     }
@@ -36,7 +37,7 @@ public sealed class ProviderExpandPresenterTests
     {
         var state = ProviderExpandPresenter.Toggle(
             ProviderSection.Gemini,
-            new ProviderExpandState(true, false, false, false, false, false, false));
+            new ProviderExpandState(true, false, false, false, false, false, false, false));
 
         Assert.False(state.Cursor);
         Assert.False(state.OpenAi);
@@ -48,7 +49,7 @@ public sealed class ProviderExpandPresenterTests
     {
         var state = ProviderExpandPresenter.Toggle(
             ProviderSection.Claude,
-            new ProviderExpandState(true, false, false, false, false, false, false));
+            new ProviderExpandState(true, false, false, false, false, false, false, false));
 
         Assert.False(state.Cursor);
         Assert.True(state.Claude);
@@ -67,6 +68,7 @@ public sealed class ProviderExpandPresenterTests
         Assert.False(state.OpenRouter);
         Assert.False(state.OpenCode);
         Assert.False(state.Fal);
+        Assert.False(state.Xai);
     }
 
     [Fact]
@@ -75,7 +77,18 @@ public sealed class ProviderExpandPresenterTests
         var state = ProviderExpandState.ExpandOnly(ProviderSection.Fal);
 
         Assert.True(state.Fal);
+        Assert.False(state.Xai);
         Assert.False(state.OpenCode);
         Assert.False(state.OpenRouter);
+    }
+
+    [Fact]
+    public void ExpandOnly_xai_enables_only_xai()
+    {
+        var state = ProviderExpandState.ExpandOnly(ProviderSection.Xai);
+
+        Assert.True(state.Xai);
+        Assert.False(state.Fal);
+        Assert.False(state.OpenCode);
     }
 }

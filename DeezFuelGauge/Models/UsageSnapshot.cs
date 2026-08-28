@@ -21,6 +21,7 @@ public sealed class UsageSnapshot
     public OpenRouterSnapshot OpenRouter { get; init; } = OpenRouterSnapshot.Unavailable();
     public OpenCodeSnapshot OpenCode { get; init; } = OpenCodeSnapshot.Unavailable();
     public FalSnapshot Fal { get; init; } = FalSnapshot.Unavailable();
+    public XaiSnapshot Xai { get; init; } = XaiSnapshot.Unavailable();
     public GrokBotSnapshot GrokBot { get; init; } = GrokBotSnapshot.Unavailable();
     public bool HasProviderBreakdown =>
         OpenAi.IsAvailable || Claude.IsAvailable || Gemini.IsAvailable;

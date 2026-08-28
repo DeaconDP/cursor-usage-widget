@@ -15,6 +15,7 @@ public enum ProviderSourceKind
     OpenCodeZen,
     OpenCodeGo,
     FalCredits,
+    XaiCredits,
     GrokBotLimits,
     DiskDrives,
     DiskDrive,

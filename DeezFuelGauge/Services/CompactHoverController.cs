@@ -10,7 +10,7 @@ public static class CompactHoverController
         bool settingsExpanded,
         bool contextMenuOpen,
         bool dragging,
-        bool keyboardFocused)
+        bool inputFocused)
     {
         if (!useCompactMode)
             return true;
@@ -19,6 +19,6 @@ public static class CompactHoverController
                || settingsExpanded
                || contextMenuOpen
                || dragging
-               || keyboardFocused;
+               || inputFocused;
     }
 }

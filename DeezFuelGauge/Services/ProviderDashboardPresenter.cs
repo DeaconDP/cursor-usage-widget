@@ -29,6 +29,9 @@ public static class ProviderDashboardPresenter
     public static bool IsFalDashboardVisible(ProviderBillingSettings settings) =>
         settings.ShowProLimits;
 
+    public static bool IsXaiDashboardVisible(ProviderBillingSettings settings) =>
+        settings.ShowProLimits;
+
     public static double ComputeCursorHeadline(UsageSnapshot snapshot, WidgetSettings settings)
     {
         // Cursor plan usage has separate Auto and API pools. When breakdown is on, surface the
@@ -96,7 +99,7 @@ public static class ProviderDashboardPresenter
         var values = new List<double>();
 
         if (settings.ShowProLimits && snapshot.ClaudePro.IsAvailable)
-            values.Add(ProviderLimitsPresenter.HeadlinePercent(snapshot.ClaudePro.SessionPercentUsed, snapshot.ClaudePro.WeeklyPercentUsed));
+            values.Add(ProviderLimitsPresenter.ComputeClaudeProHeadline(snapshot.ClaudePro));
 
         if (settings.ShowApiConsoleBilling && snapshot.ClaudeDirect.IsAvailable)
             values.Add(snapshot.ClaudeDirect.PercentUsed);
@@ -158,6 +161,14 @@ public static class ProviderDashboardPresenter
         return snapshot.Fal.HeadlinePercentUsed;
     }
 
+    public static double ComputeXaiHeadline(UsageSnapshot snapshot, ProviderBillingSettings settings)
+    {
+        if (!settings.ShowProLimits || !snapshot.Xai.IsAvailable)
+            return 0;
+
+        return snapshot.Xai.HeadlinePercentUsed;
+    }
+
     public static double ComputeGrokBotHeadline(UsageSnapshot snapshot, ProviderBillingSettings settings)
     {
         if (!settings.ShowProLimits || !snapshot.GrokBot.IsAvailable)
@@ -203,6 +214,9 @@ public static class ProviderDashboardPresenter
 
     public static bool IsFalHeadlineConnected(UsageSnapshot snapshot, ProviderBillingSettings settings) =>
         settings.ShowProLimits && snapshot.Fal.IsAvailable;
+
+    public static bool IsXaiHeadlineConnected(UsageSnapshot snapshot, ProviderBillingSettings settings) =>
+        settings.ShowProLimits && snapshot.Xai.IsAvailable;
 
     public static bool IsGrokBotHeadlineConnected(UsageSnapshot snapshot, ProviderBillingSettings settings) =>
         settings.ShowProLimits && snapshot.GrokBot.IsAvailable;

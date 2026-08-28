@@ -141,14 +141,51 @@ public static class ProviderLimitsPresenter
         return FormatResetTimes(codex.SessionResetsAt, codex.WeeklyResetsAt);
     }
 
+    public static double ComputeClaudeProHeadline(ClaudeProSnapshot pro)
+    {
+        if (pro.ExtraUsageIsAvailable)
+        {
+            return HeadlinePercent3(
+                pro.SessionPercentUsed,
+                pro.WeeklyPercentUsed,
+                pro.ExtraUsagePercentRaw);
+        }
+
+        return HeadlinePercent(pro.SessionPercentUsed, pro.WeeklyPercentUsed);
+    }
+
+    public static string FormatClaudeProExtraUsagePercent(ClaudeProSnapshot pro)
+    {
+        if (!pro.ExtraUsageIsAvailable)
+            return "—";
+
+        var rounded = Math.Round(pro.ExtraUsagePercentRaw);
+        return $"{rounded.ToString(CultureInfo.InvariantCulture)}%";
+    }
+
     public static string FormatClaudeProFooter(ClaudeProSnapshot pro, bool includeResets = true)
     {
         if (!pro.IsAvailable)
             return "";
 
-        return includeResets
-            ? FormatResetTimes(pro.SessionResetsAt, pro.WeeklyResetsAt)
-            : "";
+        if (!includeResets)
+            return "";
+
+        var parts = new List<string>();
+        var sessionWeekly = FormatResetTimes(pro.SessionResetsAt, pro.WeeklyResetsAt);
+        if (!string.IsNullOrEmpty(sessionWeekly))
+            parts.Add(sessionWeekly);
+
+        if (pro.ExtraUsageIsAvailable && pro.ExtraUsageResetsAt is { } monthlyReset)
+            parts.Add($"monthly resets {FormatResetTime(monthlyReset)}");
+
+        if (pro.ExtraUsageOutOfCredits)
+            parts.Add("monthly spend limit reached");
+
+        if (pro.ExtraUsageDisabledUntil is { } disabledUntil)
+            parts.Add($"blocked until {FormatResetTime(disabledUntil)}");
+
+        return string.Join(" · ", parts);
     }
 
     public static string FormatAntigravityFooter(AntigravitySnapshot snapshot, bool includeResets = true)

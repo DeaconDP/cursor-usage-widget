@@ -18,6 +18,7 @@ public sealed class DirectBillingServiceTests
             OpenRouter = new ProviderBillingSettings { ShowProLimits = false },
             OpenCode = new ProviderBillingSettings { ShowProLimits = false, ShowDirectSource = false },
             Fal = new ProviderBillingSettings { ShowProLimits = false },
+            Xai = new ProviderBillingSettings { ShowProLimits = false },
             GrokBot = new ProviderBillingSettings { ShowProLimits = false }
         };
 
@@ -30,6 +31,7 @@ public sealed class DirectBillingServiceTests
         Assert.False(enriched.OpenRouter.IsAvailable);
         Assert.False(enriched.OpenCode.IsAvailable);
         Assert.False(enriched.Fal.IsAvailable);
+        Assert.False(enriched.Xai.IsAvailable);
         Assert.False(enriched.GrokBot.IsAvailable);
         Assert.Equal(42, enriched.PercentUsed);
     }
@@ -55,6 +57,7 @@ public sealed class DirectBillingServiceTests
                 OpenRouter = new ProviderBillingSettings { ShowProLimits = false },
                 OpenCode = new ProviderBillingSettings { ShowProLimits = false, ShowDirectSource = false },
                 Fal = new ProviderBillingSettings { ShowProLimits = false },
+                Xai = new ProviderBillingSettings { ShowProLimits = false },
                 GrokBot = new ProviderBillingSettings { ShowProLimits = false }
             };
 

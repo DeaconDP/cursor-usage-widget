@@ -1,7 +1,8 @@
+using Avalonia;
+using Avalonia.Controls;
 using DeezFuelGauge.Models;
 using DeezFuelGauge.Services;
 using Xunit;
-
 namespace DeezFuelGauge.Tests;
 
 public sealed class CompactGlancePresenterTests
@@ -116,6 +117,7 @@ public sealed class CompactGlancePresenterTests
         settings.OpenCode.ShowDirectSource = false;
         settings.OpenCode.ShowProLimits = false;
         settings.Fal.ShowProLimits = false;
+        settings.Xai.ShowProLimits = false;
         settings.GrokBot.ShowProLimits = false;
         return settings;
     }
@@ -132,7 +134,7 @@ public sealed class CompactHoverControllerTests
             settingsExpanded: false,
             contextMenuOpen: false,
             dragging: false,
-            keyboardFocused: false));
+            inputFocused: false));
     }
 
     [Fact]
@@ -144,7 +146,7 @@ public sealed class CompactHoverControllerTests
             settingsExpanded: false,
             contextMenuOpen: false,
             dragging: false,
-            keyboardFocused: false));
+            inputFocused: false));
     }
 
     [Theory]
@@ -158,7 +160,7 @@ public sealed class CompactHoverControllerTests
         bool settingsExpanded,
         bool contextMenuOpen,
         bool dragging,
-        bool keyboardFocused)
+        bool inputFocused)
     {
         Assert.True(CompactHoverController.ShouldShowFullLayout(
             useCompactMode: true,
@@ -166,7 +168,7 @@ public sealed class CompactHoverControllerTests
             settingsExpanded,
             contextMenuOpen,
             dragging,
-            keyboardFocused));
+            inputFocused));
     }
 }
 
@@ -215,9 +217,81 @@ public sealed class CompactLayoutAnimatorTests
     [Fact]
     public void FullOpacity_stays_zero_until_fade_start()
     {
-        Assert.Equal(0, CompactLayoutAnimator.FullOpacity(0.2));
+        Assert.Equal(0, CompactLayoutAnimator.FullOpacity(0.15));
         Assert.Equal(0, CompactLayoutAnimator.CompactOpacity(1));
         Assert.Equal(1, CompactLayoutAnimator.FullOpacity(1));
         Assert.Equal(1, CompactLayoutAnimator.CompactOpacity(0));
+    }
+
+    [Fact]
+    public void DurationFor_uses_revised_expand_and_collapse_durations()
+    {
+        Assert.Equal(220, CompactLayoutAnimator.DurationFor(0, 1).TotalMilliseconds);
+        Assert.Equal(170, CompactLayoutAnimator.DurationFor(1, 0).TotalMilliseconds);
+        Assert.Equal(110, CompactLayoutAnimator.DurationFor(0.5, 1).TotalMilliseconds);
+    }
+
+    [Fact]
+    public void ApplyEase_uses_quad_curves()
+    {
+        Assert.Equal(0.75, CompactLayoutAnimator.ApplyEase(0.5, expanding: true));
+        Assert.Equal(0.25, CompactLayoutAnimator.ApplyEase(0.5, expanding: false));
+    }
+
+    [Theory]
+    [InlineData(0, true, false)]
+    [InlineData(0.5, true, true)]
+    [InlineData(1, false, true)]
+    [InlineData(0.96, false, true)]
+    [InlineData(0.04, true, false)]
+    public void Layer_visibility_thresholds(double progress, bool renderCompact, bool renderFull)
+    {
+        Assert.Equal(renderCompact, CompactLayoutAnimator.ShouldRenderCompact(progress));
+        Assert.Equal(renderFull, CompactLayoutAnimator.ShouldRenderFull(progress));
+    }
+}
+
+public sealed class CompactInteractionTrackerTests
+{
+    [Fact]
+    public void ShouldKeepFullLayoutForFocus_false_for_null_or_non_input()
+    {
+        Assert.False(CompactInteractionTracker.ShouldKeepFullLayoutForFocus(null));
+        Assert.False(CompactInteractionTracker.ShouldKeepFullLayoutForFocus(new TextBlock()));
+    }
+
+    [Fact]
+    public void ShouldKeepFullLayoutForFocus_true_for_visible_text_box()
+    {
+        var host = new Panel { IsVisible = true };
+        var textBox = new TextBox();
+        host.Children.Add(textBox);
+
+        Assert.True(CompactInteractionTracker.ShouldKeepFullLayoutForFocus(textBox));
+    }
+
+    [Fact]
+    public void ShouldKeepFullLayoutForFocus_false_for_hidden_text_box()
+    {
+        var host = new Panel { IsVisible = false };
+        var textBox = new TextBox();
+        host.Children.Add(textBox);
+
+        Assert.False(CompactInteractionTracker.ShouldKeepFullLayoutForFocus(textBox));
+    }
+
+    [Theory]
+    [InlineData(-1, 5, 10, 10, false)]
+    [InlineData(0, 0, 10, 10, true)]
+    [InlineData(10, 10, 10, 10, true)]
+    [InlineData(11, 5, 10, 10, false)]
+    public void IsPointerWithinBounds_respects_window_edges(
+        double x,
+        double y,
+        double width,
+        double height,
+        bool expected)
+    {
+        Assert.Equal(expected, CompactInteractionTracker.IsPointerWithinBounds(new Point(x, y), new Size(width, height)));
     }
 }

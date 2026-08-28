@@ -92,3 +92,20 @@ public sealed class FalUsageAdapter : IProviderUsageAdapter<FalSnapshot>
     public Task<FalSnapshot> FetchAsync(CancellationToken cancellationToken = default) =>
         _client.FetchAsync(_settings, cancellationToken);
 }
+
+public sealed class XaiUsageAdapter : IProviderUsageAdapter<XaiSnapshot>
+{
+    private readonly XaiUsageClient _client;
+    private readonly ProviderBillingSettings _settings;
+
+    public XaiUsageAdapter(XaiUsageClient client, ProviderBillingSettings settings)
+    {
+        _client = client;
+        _settings = settings;
+    }
+
+    public string ProviderKey => "xai";
+
+    public Task<XaiSnapshot> FetchAsync(CancellationToken cancellationToken = default) =>
+        _client.FetchAsync(_settings, cancellationToken);
+}
