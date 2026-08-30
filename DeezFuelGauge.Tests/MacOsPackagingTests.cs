@@ -14,6 +14,8 @@ public class MacOsPackagingTests
         Assert.True(File.Exists(Path.Combine(repoRoot, "packaging", "icons", "app-icon.ico")));
         Assert.True(File.Exists(Path.Combine(repoRoot, "packaging", "icons", "app-icon.png")));
         Assert.True(File.Exists(Path.Combine(repoRoot, "packaging", "icons", "AppIcon.icns")));
+        Assert.True(File.Exists(Path.Combine(repoRoot, "packaging", "macos", "AppIcon.icon", "icon.json")));
+        Assert.True(File.Exists(Path.Combine(repoRoot, "packaging", "macos", "AppIcon.icon", "Assets", "glyph.png")));
         Assert.True(File.Exists(Path.Combine(repoRoot, "scripts", "generate-app-icons.py")));
         Assert.True(File.Exists(Path.Combine(repoRoot, "scripts", "package-macos-app.sh")));
         Assert.True(File.Exists(Path.Combine(repoRoot, "scripts", "ensure-dotnet8-sdk.sh")));
@@ -23,6 +25,20 @@ public class MacOsPackagingTests
         Assert.True(File.Exists(Path.Combine(repoRoot, "run.bat")));
         Assert.True(File.Exists(Path.Combine(repoRoot, "run.ps1")));
         Assert.True(File.Exists(Path.Combine(repoRoot, "run.command")));
+    }
+
+    [Fact]
+    public void ApplicationIcon_ico_uses_windows_icon_header_not_png()
+    {
+        var icoPath = Path.Combine(FindRepoRoot(), "packaging", "icons", "app-icon.ico");
+        Assert.True(File.Exists(icoPath));
+
+        using var stream = File.OpenRead(icoPath);
+        var header = new byte[4];
+        Assert.Equal(4, stream.Read(header, 0, 4));
+
+        // ICO: reserved(0) + type(1); PNG starts with 89 50 4E 47
+        Assert.Equal(new byte[] { 0x00, 0x00, 0x01, 0x00 }, header);
     }
 
     [Fact]

@@ -66,6 +66,10 @@ public static class MacOsAppPackager
         if (File.Exists(appIcon))
             File.Copy(appIcon, Path.Combine(resourcesDir, "AppIcon.icns"), overwrite: true);
 
+        var appIconBundle = Path.Combine(repoRoot, "packaging", "macos", "AppIcon.icon");
+        if (Directory.Exists(appIconBundle))
+            CopyDirectory(appIconBundle, Path.Combine(resourcesDir, "AppIcon.icon"));
+
         CopyPublishedFiles(publishDir, macOsDir);
         SignAppBundle(appPath);
 
@@ -167,6 +171,7 @@ public static class MacOsAppPackager
 
     private static void CopyDirectory(string sourceDir, string destinationDir)
     {
+        Directory.CreateDirectory(destinationDir);
         foreach (var directory in Directory.GetDirectories(sourceDir, "*", SearchOption.AllDirectories))
             Directory.CreateDirectory(directory.Replace(sourceDir, destinationDir, StringComparison.Ordinal));
 
