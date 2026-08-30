@@ -216,8 +216,11 @@ public sealed class ProviderEasySetupService
             return new EasySetupResult(message, OpenedExternalUrl: true);
         }
 
-        var status = await _xai.TestConnectionAsync(apiKey, settings.Xai.WorkspaceId, cancellationToken);
-        settings.Xai.LastConnectionStatus = status;
+        var status = await _xai.TestConnectionAsync(
+            apiKey,
+            settings.Xai.WorkspaceId,
+            settings.Xai,
+            cancellationToken);
         return new EasySetupResult(status);
     }
 

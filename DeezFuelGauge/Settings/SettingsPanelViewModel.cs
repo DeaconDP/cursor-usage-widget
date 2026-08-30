@@ -738,6 +738,19 @@ public sealed class SettingsPanelViewModel : ViewModelBase
         UpdateConnectionStates();
     }
 
+    /// <summary>
+    /// Copy a resolved xAI team UUID from persisted settings into the Credits source
+    /// so Commit cannot wipe it and the Advanced field stays in sync after refresh.
+    /// </summary>
+    public void SyncXaiWorkspaceFromSettings(WidgetSettings settings)
+    {
+        var credits = GetSource(ProviderSourceKind.XaiCredits);
+        var workspaceId = settings.Xai.WorkspaceId ?? "";
+        if (credits.WorkspaceId != workspaceId)
+            credits.WorkspaceId = workspaceId;
+        UpdateConnectionStates();
+    }
+
     public void UpdateConnectionStates()
     {
         var hasCursorToken = !string.IsNullOrWhiteSpace(_cursorTokenReader().AccessToken);
@@ -791,9 +804,7 @@ public sealed class SettingsPanelViewModel : ViewModelBase
 
         SetSectionColor(
             SettingsExpandedProvider.Xai,
-            ProviderConnectionStateHelper.FromConnected(
-                ShowXaiLimits,
-                HasXaiApiKeySaved && !string.IsNullOrWhiteSpace(GetSource(ProviderSourceKind.XaiCredits).WorkspaceId)));
+            ProviderConnectionStateHelper.FromConnected(ShowXaiLimits, HasXaiApiKeySaved));
 
         SetSectionColor(
             SettingsExpandedProvider.Disk,
@@ -1124,6 +1135,8 @@ public sealed class SettingsPanelViewModel : ViewModelBase
     {
         var result = await _easySetup.SetupXaiAsync(settings);
         XaiStatus = settings.Xai.LastConnectionStatus ?? result.StatusMessage ?? "";
+        // Persist resolved team into the VM before CompleteEasySetup Commit can wipe it.
+        SyncXaiWorkspaceFromSettings(settings);
         await CompleteEasySetupAsync(settings);
     }
 
@@ -1352,8 +1365,11 @@ public sealed class SettingsPanelViewModel : ViewModelBase
     {
         Commit(settings);
         var key = CredentialStore.Retrieve(_xaiCredentialId);
-        XaiStatus = await _xaiBilling.TestConnectionAsync(key ?? "", settings.Xai.WorkspaceId);
-        settings.Xai.LastConnectionStatus = XaiStatus;
+        XaiStatus = await _xaiBilling.TestConnectionAsync(
+            key ?? "",
+            settings.Xai.WorkspaceId,
+            settings.Xai);
+        SyncXaiWorkspaceFromSettings(settings);
         _host?.OnSettingsChanged();
     }
 

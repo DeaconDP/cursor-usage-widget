@@ -30,11 +30,9 @@ public sealed class XaiUsageClient : IDisposable
         try
         {
             var teamId = await ResolveTeamIdAsync(apiKey, settings.WorkspaceId, cancellationToken);
-            // Persist resolved UUID so the next refresh skips validation.
-            if (!string.Equals(settings.WorkspaceId?.Trim(), teamId, StringComparison.Ordinal))
-                settings.WorkspaceId = teamId;
+            ApplyResolvedTeamId(settings, teamId);
 
-            var snapshot = await FetchBalanceAsync(apiKey, teamId, settings, cancellationToken);
+            var snapshot = await FetchCreditsAsync(apiKey, teamId, settings, cancellationToken);
             settings.LastConnectionStatus = snapshot.IsAvailable ? "Connected" : (snapshot.StatusMessage ?? "Unavailable");
             return snapshot;
         }
@@ -53,6 +51,13 @@ public sealed class XaiUsageClient : IDisposable
     public async Task<string> TestConnectionAsync(
         string apiKey,
         string? teamId,
+        CancellationToken cancellationToken = default) =>
+        await TestConnectionAsync(apiKey, teamId, settings: null, cancellationToken);
+
+    public async Task<string> TestConnectionAsync(
+        string apiKey,
+        string? teamId,
+        ProviderBillingSettings? settings,
         CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(apiKey))
@@ -60,45 +65,131 @@ public sealed class XaiUsageClient : IDisposable
 
         try
         {
-            var resolvedTeamId = await ResolveTeamIdAsync(apiKey, teamId, cancellationToken);
-            var snapshot = await FetchBalanceAsync(apiKey, resolvedTeamId, settings: null, cancellationToken);
-            return snapshot.IsAvailable ? "Connected" : (snapshot.StatusMessage ?? "Unavailable");
+            var configuredTeamId = teamId ?? settings?.WorkspaceId;
+            var resolvedTeamId = await ResolveTeamIdAsync(apiKey, configuredTeamId, cancellationToken);
+            if (settings is not null)
+                ApplyResolvedTeamId(settings, resolvedTeamId);
+
+            var snapshot = await FetchCreditsAsync(apiKey, resolvedTeamId, settings, cancellationToken);
+            var status = snapshot.IsAvailable ? "Connected" : (snapshot.StatusMessage ?? "Unavailable");
+            if (settings is not null)
+                settings.LastConnectionStatus = status;
+            return status;
         }
         catch (XaiUsageException ex)
         {
+            if (settings is not null)
+                settings.LastConnectionStatus = ex.Message;
             return ex.Message;
         }
         catch (Exception)
         {
-            return "Request failed";
+            const string message = "Request failed";
+            if (settings is not null)
+                settings.LastConnectionStatus = message;
+            return message;
         }
     }
 
-    internal static XaiSnapshot ParseBalanceResponse(JsonElement root, ProviderBillingSettings? settings = null)
+    /// <summary>
+    /// Persist the resolved team UUID. Clears prepaid baseline when switching from one
+    /// real team UUID to another so % used does not carry across accounts.
+    /// </summary>
+    internal static void ApplyResolvedTeamId(ProviderBillingSettings settings, string teamId)
+    {
+        var previous = settings.WorkspaceId?.Trim();
+        if (string.Equals(previous, teamId, StringComparison.Ordinal))
+            return;
+
+        // Keep baseline when first resolving empty/"default" → UUID (same tank after auto-detect).
+        if (!string.IsNullOrWhiteSpace(previous)
+            && !string.Equals(previous, "default", StringComparison.OrdinalIgnoreCase))
+        {
+            settings.CreditBaselineUsd = null;
+            settings.LastObservedBalanceUsd = null;
+        }
+
+        settings.WorkspaceId = teamId;
+    }
+
+    /// <summary>
+    /// xAI billing cents: top-ups often arrive negative; usage often positive.
+    /// Always take the absolute cent magnitude before converting to USD.
+    /// </summary>
+    internal static double CentsLedgerToUsd(double cents) =>
+        (cents < 0 ? -cents : cents) / 100.0;
+
+    internal static XaiSnapshot ParseBalanceResponse(JsonElement root, ProviderBillingSettings? settings = null) =>
+        ComposeCredits(ParsePrepaidTotalUsd(root), prepaidUsedUsd: null, settings);
+
+    internal static XaiSnapshot ComposeCredits(
+        double prepaidTotalUsd,
+        double? prepaidUsedUsd,
+        ProviderBillingSettings? settings = null)
+    {
+        if (prepaidUsedUsd is { } used)
+        {
+            var remaining = Math.Max(prepaidTotalUsd - used, 0);
+            var percent = prepaidTotalUsd <= 0
+                ? (remaining <= 0 ? 100 : 0)
+                : Math.Clamp(used / prepaidTotalUsd * 100.0, 0, 100);
+
+            if (settings is not null)
+            {
+                settings.CreditBaselineUsd = prepaidTotalUsd;
+                settings.LastObservedBalanceUsd = remaining;
+            }
+
+            return XaiSnapshot.FromCredits(remaining, prepaidTotalUsd, used, percent);
+        }
+
+        // Posted ledger only (invoice preview unavailable): treat total as remaining.
+        var postedRemaining = prepaidTotalUsd;
+        var fallbackPercent = settings is null
+            ? PrepaidCreditBaselineTracker.ComputePercentUsed(Math.Max(postedRemaining, 0), postedRemaining)
+            : PrepaidCreditBaselineTracker.Update(settings, postedRemaining);
+
+        return XaiSnapshot.FromCredits(postedRemaining, prepaidTotalUsd: null, prepaidUsedUsd: null, fallbackPercent);
+    }
+
+    internal static double ParsePrepaidTotalUsd(JsonElement root)
     {
         if (!root.TryGetProperty("total", out var total) || total.ValueKind != JsonValueKind.Object)
             throw new XaiUsageException("Billing response missing prepaid total");
 
-        if (!total.TryGetProperty("val", out var valEl)
-            || (valEl.ValueKind != JsonValueKind.String && valEl.ValueKind != JsonValueKind.Number))
+        if (!TryReadCentsVal(total, out var cents))
             throw new XaiUsageException("Invalid prepaid balance");
+
+        return CentsLedgerToUsd(cents);
+    }
+
+    internal static bool TryParsePrepaidCreditsUsedUsd(JsonElement root, out double usedUsd)
+    {
+        usedUsd = 0;
+        if (!root.TryGetProperty("coreInvoice", out var invoice) || invoice.ValueKind != JsonValueKind.Object)
+            return false;
+        if (!invoice.TryGetProperty("prepaidCreditsUsed", out var used) || used.ValueKind != JsonValueKind.Object)
+            return false;
+        if (!TryReadCentsVal(used, out var cents))
+            return false;
+
+        usedUsd = CentsLedgerToUsd(cents);
+        return true;
+    }
+
+    private static bool TryReadCentsVal(JsonElement container, out double cents)
+    {
+        cents = 0;
+        if (!container.TryGetProperty("val", out var valEl)
+            || (valEl.ValueKind != JsonValueKind.String && valEl.ValueKind != JsonValueKind.Number))
+            return false;
 
         var centsText = valEl.ValueKind == JsonValueKind.String
             ? valEl.GetString()
             : valEl.GetRawText();
 
-        if (string.IsNullOrWhiteSpace(centsText)
-            || !double.TryParse(centsText, NumberStyles.Float, CultureInfo.InvariantCulture, out var cents))
-            throw new XaiUsageException("Invalid prepaid balance");
-
-        // Inverted ledger: a $10 top-up appears as "-1000" (USD cents).
-        var balance = -cents / 100.0;
-
-        var percent = settings is null
-            ? PrepaidCreditBaselineTracker.ComputePercentUsed(Math.Max(balance, 0), balance)
-            : PrepaidCreditBaselineTracker.Update(settings, balance);
-
-        return XaiSnapshot.FromBalance(balance, "USD", percent);
+        return !string.IsNullOrWhiteSpace(centsText)
+               && double.TryParse(centsText, NumberStyles.Float, CultureInfo.InvariantCulture, out cents);
     }
 
     /// <summary>
@@ -163,10 +254,20 @@ public sealed class XaiUsageClient : IDisposable
         return ParseTeamIdFromValidation(doc.RootElement);
     }
 
-    private async Task<XaiSnapshot> FetchBalanceAsync(
+    private async Task<XaiSnapshot> FetchCreditsAsync(
         string apiKey,
         string teamId,
         ProviderBillingSettings? settings,
+        CancellationToken cancellationToken)
+    {
+        var prepaidTotalUsd = await FetchPrepaidTotalUsdAsync(apiKey, teamId, cancellationToken);
+        var prepaidUsedUsd = await TryFetchPrepaidUsedUsdAsync(apiKey, teamId, cancellationToken);
+        return ComposeCredits(prepaidTotalUsd, prepaidUsedUsd, settings);
+    }
+
+    private async Task<double> FetchPrepaidTotalUsdAsync(
+        string apiKey,
+        string teamId,
         CancellationToken cancellationToken)
     {
         var url = $"{ManagementApiBase}/v1/billing/teams/{Uri.EscapeDataString(teamId)}/prepaid/balance";
@@ -182,7 +283,33 @@ public sealed class XaiUsageClient : IDisposable
 
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
         using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
-        return ParseBalanceResponse(doc.RootElement, settings);
+        return ParsePrepaidTotalUsd(doc.RootElement);
+    }
+
+    private async Task<double?> TryFetchPrepaidUsedUsdAsync(
+        string apiKey,
+        string teamId,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var url = $"{ManagementApiBase}/v1/billing/teams/{Uri.EscapeDataString(teamId)}/postpaid/invoice/preview";
+            using var request = new HttpRequestMessage(HttpMethod.Get, url);
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey.Trim());
+
+            using var response = await _http.SendAsync(request, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+                return null;
+
+            await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+            using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+            return TryParsePrepaidCreditsUsedUsd(doc.RootElement, out var usedUsd) ? usedUsd : null;
+        }
+        catch
+        {
+            // Preview is best-effort; fall back to posted prepaid ledger remaining.
+            return null;
+        }
     }
 
     private static string? ReadString(JsonElement root, string name) =>

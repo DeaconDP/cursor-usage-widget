@@ -361,6 +361,66 @@ public sealed class SettingsPanelViewModelTests
     }
 
     [Fact]
+    public void Xai_header_is_connected_green_with_saved_key_even_without_team_uuid()
+    {
+        var apiKeyId = CredentialStore.Store("xai-header-test", "mgmt-key");
+        try
+        {
+            var viewModel = CreateViewModel();
+            viewModel.Load(new WidgetSettings
+            {
+                Xai = new ProviderBillingSettings
+                {
+                    ShowProLimits = true,
+                    CredentialId = apiKeyId,
+                    LastConnectionStatus = "Connected"
+                }
+            });
+
+            var section = viewModel.Sections.Single(s => s.ProviderId == SettingsExpandedProvider.Xai);
+            Assert.True(viewModel.HasXaiApiKeySaved);
+            Assert.Equal("", section.Sources.Single().WorkspaceId);
+            Assert.Equal(
+                ProviderConnectionStateHelper.ToColor(ProviderConnectionState.Connected),
+                section.HeaderColor);
+        }
+        finally
+        {
+            CredentialStore.Delete(apiKeyId);
+        }
+    }
+
+    [Fact]
+    public void SyncXaiWorkspaceFromSettings_copies_team_uuid_into_credits_source()
+    {
+        var viewModel = CreateViewModel();
+        viewModel.Load(new WidgetSettings
+        {
+            Xai = new ProviderBillingSettings { ShowProLimits = true }
+        });
+
+        var settings = new WidgetSettings
+        {
+            Xai = new ProviderBillingSettings
+            {
+                ShowProLimits = true,
+                WorkspaceId = "team-synced"
+            }
+        };
+
+        viewModel.SyncXaiWorkspaceFromSettings(settings);
+
+        var credits = viewModel.Sections
+            .Single(s => s.ProviderId == SettingsExpandedProvider.Xai)
+            .Sources.Single();
+        Assert.Equal("team-synced", credits.WorkspaceId);
+
+        var committed = new WidgetSettings();
+        viewModel.Commit(committed);
+        Assert.Equal("team-synced", committed.Xai.WorkspaceId);
+    }
+
+    [Fact]
     public void NotifyLayoutChanged_forwards_to_host()
     {
         var host = new FakeSettingsPanelHost();
