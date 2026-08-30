@@ -161,6 +161,33 @@ public sealed class SettingsSectionMapperTests
         Assert.Equal("team-new", applied.Xai.WorkspaceId);
     }
 
+    [Fact]
+    public void ApplyXai_clears_prepaid_baseline_when_team_uuid_changes()
+    {
+        var sections = new List<ProviderSettingsSectionViewModel>();
+        var host = CreateViewModel();
+        var settings = new WidgetSettings
+        {
+            Xai = new ProviderBillingSettings
+            {
+                ShowProLimits = true,
+                WorkspaceId = "team-old",
+                CreditBaselineUsd = 20,
+                LastObservedBalanceUsd = 12
+            }
+        };
+
+        SettingsSectionMapper.PopulateSections(sections, settings, host);
+        sections.Single(s => s.ProviderId == SettingsExpandedProvider.Xai)
+            .Sources.Single().WorkspaceId = "team-new";
+
+        SettingsSectionMapper.ApplyToSettings(sections, settings, SettingsExpandedProvider.Xai);
+
+        Assert.Equal("team-new", settings.Xai.WorkspaceId);
+        Assert.Null(settings.Xai.CreditBaselineUsd);
+        Assert.Null(settings.Xai.LastObservedBalanceUsd);
+    }
+
     private static SettingsPanelViewModel CreateViewModel() =>
         new(
             new ProviderEasySetupService(),

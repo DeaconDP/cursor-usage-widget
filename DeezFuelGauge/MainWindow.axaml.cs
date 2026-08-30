@@ -1250,6 +1250,7 @@ public partial class MainWindow : Window, ISettingsPanelHost
             ApplySnapshot(result.Snapshot);
             ApplyDegradedTooltips();
             SaveSettings();
+            _settingsViewModel.SyncXaiWorkspaceFromSettings(_settings);
             _settingsViewModel.UpdateCursorConnectionStatus();
             _settingsViewModel.UpdateStatusFromSettings(_settings);
             _settingsViewModel.InvalidateAuthDetectionCache();

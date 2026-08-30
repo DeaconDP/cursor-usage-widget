@@ -122,6 +122,211 @@ public sealed class XaiUsageClientTests
     }
 
     [Fact]
+    public void ApplyResolvedTeamId_keeps_baseline_when_first_resolving_empty()
+    {
+        var settings = new ProviderBillingSettings
+        {
+            CreditBaselineUsd = 12,
+            LastObservedBalanceUsd = 8
+        };
+
+        XaiUsageClient.ApplyResolvedTeamId(settings, "team-xyz");
+
+        Assert.Equal("team-xyz", settings.WorkspaceId);
+        Assert.Equal(12, settings.CreditBaselineUsd);
+        Assert.Equal(8, settings.LastObservedBalanceUsd);
+    }
+
+    [Fact]
+    public void ApplyResolvedTeamId_clears_baseline_on_team_change()
+    {
+        var settings = new ProviderBillingSettings
+        {
+            WorkspaceId = "team-a",
+            CreditBaselineUsd = 12,
+            LastObservedBalanceUsd = 8
+        };
+
+        XaiUsageClient.ApplyResolvedTeamId(settings, "team-b");
+
+        Assert.Equal("team-b", settings.WorkspaceId);
+        Assert.Null(settings.CreditBaselineUsd);
+        Assert.Null(settings.LastObservedBalanceUsd);
+    }
+
+    [Fact]
+    public async Task TestConnectionAsync_persists_resolved_team_when_settings_provided()
+    {
+        var handler = new RecordingHandler(request =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            if (path.Contains("validation", StringComparison.Ordinal))
+                return OkJson("""{"scope":"SCOPE_TEAM","scopeId":"team-from-test"}""");
+            if (path.EndsWith("/prepaid/balance", StringComparison.Ordinal))
+                return OkJson("""{"total":{"val":"-1000"}}""");
+            if (path.EndsWith("/postpaid/invoice/preview", StringComparison.Ordinal))
+                return new HttpResponseMessage(HttpStatusCode.NotFound);
+            throw new InvalidOperationException($"Unexpected path: {path}");
+        });
+
+        using var client = new XaiUsageClient(new HttpClient(handler));
+        var settings = new ProviderBillingSettings { ShowProLimits = true };
+
+        var status = await client.TestConnectionAsync("mgmt-key", teamId: null, settings);
+
+        Assert.Equal("Connected", status);
+        Assert.Equal("team-from-test", settings.WorkspaceId);
+        Assert.Equal("Connected", settings.LastConnectionStatus);
+        Assert.Equal(10, settings.CreditBaselineUsd);
+    }
+
+    [Fact]
+    public void ComposeCredits_uses_live_remaining_from_total_minus_used()
+    {
+        var settings = new ProviderBillingSettings
+        {
+            CreditBaselineUsd = 99,
+            LastObservedBalanceUsd = 50
+        };
+
+        var snapshot = XaiUsageClient.ComposeCredits(
+            prepaidTotalUsd: 10,
+            prepaidUsedUsd: 2.26,
+            settings);
+
+        Assert.True(snapshot.IsAvailable);
+        Assert.Equal(7.74, snapshot.BalanceUsd!.Value, 2);
+        Assert.Equal(10, snapshot.PrepaidTotalUsd);
+        Assert.Equal(2.26, snapshot.PrepaidUsedUsd);
+        Assert.Equal(22.6, snapshot.HeadlinePercentUsed, 1);
+        Assert.Equal("$7.74 left · $2.26 used of $10.00", snapshot.DetailLabel);
+        Assert.Equal(10, settings.CreditBaselineUsd);
+        Assert.Equal(7.74, settings.LastObservedBalanceUsd!.Value, 2);
+    }
+
+    [Fact]
+    public void ComposeCredits_falls_back_to_posted_remaining_without_used()
+    {
+        var settings = new ProviderBillingSettings();
+        var snapshot = XaiUsageClient.ComposeCredits(10, prepaidUsedUsd: null, settings);
+
+        Assert.Equal(10, snapshot.BalanceUsd);
+        Assert.Null(snapshot.PrepaidUsedUsd);
+        Assert.Equal(0, snapshot.HeadlinePercentUsed);
+        Assert.Equal("$10.00 left", snapshot.DetailLabel);
+        Assert.Equal(10, settings.CreditBaselineUsd);
+    }
+
+    [Fact]
+    public void CentsLedgerToUsd_takes_absolute_magnitude()
+    {
+        Assert.Equal(10, XaiUsageClient.CentsLedgerToUsd(-1000));
+        Assert.Equal(2.26, XaiUsageClient.CentsLedgerToUsd(226));
+        Assert.Equal(4.5, XaiUsageClient.CentsLedgerToUsd(-450));
+    }
+
+    [Fact]
+    public void TryParsePrepaidCreditsUsedUsd_reads_core_invoice_field()
+    {
+        using var doc = JsonDocument.Parse("""
+            {
+              "coreInvoice": {
+                "prepaidCreditsUsed": { "val": "226" }
+              }
+            }
+            """);
+
+        Assert.True(XaiUsageClient.TryParsePrepaidCreditsUsedUsd(doc.RootElement, out var used));
+        Assert.Equal(2.26, used, 2);
+    }
+
+    [Fact]
+    public async Task FetchAsync_computes_live_remaining_from_invoice_preview()
+    {
+        var handler = new RecordingHandler(request =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            if (path.EndsWith("/prepaid/balance", StringComparison.Ordinal))
+                return OkJson("""{"total":{"val":"-1000"}}""");
+            if (path.EndsWith("/postpaid/invoice/preview", StringComparison.Ordinal))
+            {
+                return OkJson("""
+                    {
+                      "coreInvoice": {
+                        "prepaidCreditsUsed": { "val": "226" }
+                      }
+                    }
+                    """);
+            }
+
+            throw new InvalidOperationException($"Unexpected path: {path}");
+        });
+
+        var credentialId = CredentialStore.Store("xai", "mgmt-key");
+        try
+        {
+            using var client = new XaiUsageClient(new HttpClient(handler));
+            var settings = new ProviderBillingSettings
+            {
+                ShowProLimits = true,
+                CredentialId = credentialId,
+                WorkspaceId = "team-live"
+            };
+
+            var snapshot = await client.FetchAsync(settings);
+
+            Assert.True(snapshot.IsAvailable);
+            Assert.Equal(7.74, snapshot.BalanceUsd!.Value, 2);
+            Assert.Equal(22.6, snapshot.HeadlinePercentUsed, 1);
+            Assert.Equal("$7.74 left · $2.26 used of $10.00", snapshot.DetailLabel);
+            Assert.Equal(10, settings.CreditBaselineUsd);
+            Assert.Equal(7.74, settings.LastObservedBalanceUsd!.Value, 2);
+        }
+        finally
+        {
+            CredentialStore.Delete(credentialId);
+        }
+    }
+
+    [Fact]
+    public async Task FetchAsync_falls_back_when_invoice_preview_fails()
+    {
+        var handler = new RecordingHandler(request =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            if (path.EndsWith("/prepaid/balance", StringComparison.Ordinal))
+                return OkJson("""{"total":{"val":"-1000"}}""");
+            if (path.EndsWith("/postpaid/invoice/preview", StringComparison.Ordinal))
+                return new HttpResponseMessage(HttpStatusCode.Forbidden);
+            throw new InvalidOperationException($"Unexpected path: {path}");
+        });
+
+        var credentialId = CredentialStore.Store("xai", "mgmt-key");
+        try
+        {
+            using var client = new XaiUsageClient(new HttpClient(handler));
+            var settings = new ProviderBillingSettings
+            {
+                ShowProLimits = true,
+                CredentialId = credentialId,
+                WorkspaceId = "team-fallback"
+            };
+
+            var snapshot = await client.FetchAsync(settings);
+
+            Assert.True(snapshot.IsAvailable);
+            Assert.Equal(10, snapshot.BalanceUsd);
+            Assert.Null(snapshot.PrepaidUsedUsd);
+            Assert.Equal("$10.00 left", snapshot.DetailLabel);
+            Assert.Equal("Connected", settings.LastConnectionStatus);
+        }
+        finally
+        {
+            CredentialStore.Delete(credentialId);
+        }
+    }
+
+    [Fact]
     public async Task FetchAsync_returns_unavailable_when_key_missing()
     {
         using var client = new XaiUsageClient(new HttpClient(new AlwaysOkHandler()));
@@ -142,13 +347,22 @@ public sealed class XaiUsageClientTests
     {
         var handler = new RecordingHandler(request =>
         {
-            if (request.RequestUri!.AbsolutePath.Contains("validation", StringComparison.Ordinal))
+            var path = request.RequestUri!.AbsolutePath;
+            if (path.Contains("validation", StringComparison.Ordinal))
             {
                 return OkJson("""{"scope":"SCOPE_TEAM","scopeId":"team-xyz","teamId":"team-xyz"}""");
             }
 
-            Assert.Equal("/v1/billing/teams/team-xyz/prepaid/balance", request.RequestUri.AbsolutePath);
-            return OkJson("""{"total":{"val":"-2500"}}""");
+            if (path.EndsWith("/prepaid/balance", StringComparison.Ordinal))
+            {
+                Assert.Equal("/v1/billing/teams/team-xyz/prepaid/balance", path);
+                return OkJson("""{"total":{"val":"-2500"}}""");
+            }
+
+            if (path.EndsWith("/postpaid/invoice/preview", StringComparison.Ordinal))
+                return new HttpResponseMessage(HttpStatusCode.NotFound);
+
+            throw new InvalidOperationException($"Unexpected path: {path}");
         });
 
         var credentialId = CredentialStore.Store("xai", "mgmt-key");
@@ -179,11 +393,20 @@ public sealed class XaiUsageClientTests
     {
         var handler = new RecordingHandler(request =>
         {
-            if (request.RequestUri!.AbsolutePath.Contains("validation", StringComparison.Ordinal))
+            var path = request.RequestUri!.AbsolutePath;
+            if (path.Contains("validation", StringComparison.Ordinal))
                 return OkJson("""{"scope":"SCOPE_TEAM","scopeId":"real-uuid"}""");
 
-            Assert.Equal("/v1/billing/teams/real-uuid/prepaid/balance", request.RequestUri.AbsolutePath);
-            return OkJson("""{"total":{"val":"-100"}}""");
+            if (path.EndsWith("/prepaid/balance", StringComparison.Ordinal))
+            {
+                Assert.Equal("/v1/billing/teams/real-uuid/prepaid/balance", path);
+                return OkJson("""{"total":{"val":"-100"}}""");
+            }
+
+            if (path.EndsWith("/postpaid/invoice/preview", StringComparison.Ordinal))
+                return new HttpResponseMessage(HttpStatusCode.NotFound);
+
+            throw new InvalidOperationException($"Unexpected path: {path}");
         });
 
         var credentialId = CredentialStore.Store("xai", "mgmt-key");
@@ -215,11 +438,17 @@ public sealed class XaiUsageClientTests
         {
             Assert.Equal("Bearer", request.Headers.Authorization?.Scheme);
             Assert.Equal("mgmt-key", request.Headers.Authorization?.Parameter);
-            Assert.Equal(
-                "/v1/billing/teams/team-abc/prepaid/balance",
-                request.RequestUri!.AbsolutePath);
+            var path = request.RequestUri!.AbsolutePath;
+            if (path.EndsWith("/prepaid/balance", StringComparison.Ordinal))
+            {
+                Assert.Equal("/v1/billing/teams/team-abc/prepaid/balance", path);
+                return OkJson("""{"total":{"val":"-420"}}""");
+            }
 
-            return OkJson("""{"total":{"val":"-420"}}""");
+            if (path.EndsWith("/postpaid/invoice/preview", StringComparison.Ordinal))
+                return new HttpResponseMessage(HttpStatusCode.NotFound);
+
+            throw new InvalidOperationException($"Unexpected path: {path}");
         });
 
         var credentialId = CredentialStore.Store("xai", "mgmt-key");

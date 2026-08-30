@@ -642,7 +642,18 @@ internal static class SettingsSectionMapper
         var credits = section.Sources.Single();
         settings.Xai.ShowProLimits = credits.IsEnabled;
         settings.Xai.ShowDetails = credits.ShowDetails;
-        settings.Xai.WorkspaceId = NullIfEmpty(credits.WorkspaceId);
+        var newTeamId = NullIfEmpty(credits.WorkspaceId);
+        var previous = settings.Xai.WorkspaceId?.Trim();
+        if (!string.IsNullOrWhiteSpace(previous)
+            && !string.IsNullOrWhiteSpace(newTeamId)
+            && !string.Equals(previous, newTeamId, StringComparison.Ordinal)
+            && !string.Equals(previous, "default", StringComparison.OrdinalIgnoreCase))
+        {
+            settings.Xai.CreditBaselineUsd = null;
+            settings.Xai.LastObservedBalanceUsd = null;
+        }
+
+        settings.Xai.WorkspaceId = newTeamId;
         settings.Xai.LastConnectionStatus = NullIfEmpty(credits.Status);
         section.MasterEnable = credits.IsEnabled;
     }

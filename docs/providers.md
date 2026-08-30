@@ -50,9 +50,7 @@ Paste a **Management API key** from [console.x.ai](https://console.x.ai) → **S
 
 For **team-scoped** Management keys, the widget resolves the **team UUID** automatically via `GET /auth/management-keys/validation`. You only need to paste a team UUID when the key is **organization-scoped**, or when auto-detect fails. Do **not** paste the `default` slug from the console URL — that is not a team id (billing expects a UUID like `65c1e471-…`).
 
-The widget calls `GET https://management-api.x.ai/v1/billing/teams/{team_id}/prepaid/balance` and shows **remaining balance**. xAI reports an inverted ledger in string USD cents (a `$10` top-up appears as `"-1000"`). The bar uses the same observed **prepaid baseline** as fal.ai: first successful balance seeds the tank; top-ups raise the baseline; percent used is `(baseline − remaining) / baseline`. Quota alerts fire when that percent reaches your unused-quota threshold.
-
-**Note:** Spend is often posted to the prepaid ledger at billing-cycle close, so mid-cycle the API balance can be higher than the live Console remaining by the current cycle’s not-yet-posted spend.
+The widget calls `GET .../prepaid/balance` for the prepaid **tank** (`total.val`, inverted USD cents — a `$10` top-up appears as `"-1000"`) and `GET .../postpaid/invoice/preview` for live **usage** (`coreInvoice.prepaidCreditsUsed.val`). **Remaining** is `tank − used` (matching Console “Credits remaining”), and the bar is `used / tank`. Detail text shows `$X.XX left · $Y.YY used of $Z.ZZ` when both values are available. If the invoice preview is unavailable, the widget falls back to the posted prepaid ledger total as remaining (which can still look high mid-cycle until spend posts).
 
 **Troubleshooting:** **invalid bearer token** / `401` means you pasted an API (inference) key — create a **Management** key under Settings → Management Keys. `403` usually means missing billing ACL. Errors mentioning **uuid** / team not found usually mean the team field was empty, set to `default`, or belongs to a different team — leave Team UUID blank to auto-detect, or paste the UUID from team settings.
 
