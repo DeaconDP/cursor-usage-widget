@@ -6,7 +6,15 @@
 	<dict>
 		<key>Resources/AppIcon.icns</key>
 		<data>
-		V/zHnUgenXofrAB3Zhin1TtNKok=
+		YwbXhlKJpyxPOo+Ngj1Eg1/q8VQ=
+		</data>
+		<key>Resources/AppIcon.icon/Assets/glyph.png</key>
+		<data>
+		8Bw5XvM5EgTcc0g6Qxik4CUnn3g=
+		</data>
+		<key>Resources/AppIcon.icon/icon.json</key>
+		<data>
+		f4VzxJiv6915qgiD/0ZcqI7OOyY=
 		</data>
 	</dict>
 	<key>files2</key>
@@ -51,7 +59,21 @@
 		<dict>
 			<key>hash2</key>
 			<data>
-			VvUWcGpni/kKPgTW+jbrxI61XmdLO5311n6EUuMxKtU=
+			HbKrOG3KOUgQJVx322Zs6eD+fTReN6O08ce51WLelTM=
+			</data>
+		</dict>
+		<key>Resources/AppIcon.icon/Assets/glyph.png</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			mcggjLr7M44UOi0foST77Xm/vcNn3Q/HIGoMBA7+KiI=
+			</data>
+		</dict>
+		<key>Resources/AppIcon.icon/icon.json</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			tyNHJVTh1WtvdVBw5izYaX8DA7w7ygDanlB0elrNhKQ=
 			</data>
 		</dict>
 	</dict>
