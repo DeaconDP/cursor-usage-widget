@@ -27,6 +27,7 @@ public partial class MainWindow : Window, ISettingsPanelHost
     private readonly OpenRouterUsageClient _openRouterBilling = new();
     private readonly OpenCodeUsageClient _openCodeBilling = new();
     private readonly FalUsageClient _falBilling = new();
+    private readonly XaiUsageClient _xaiBilling = new();
     private readonly GrokBotUsageClient _grokBotBilling = new();
     private readonly DirectBillingService _directBilling;
     private readonly UsageRefreshService _refreshService;
@@ -47,6 +48,7 @@ public partial class MainWindow : Window, ISettingsPanelHost
     private double _lastClaudePercent;
     private double _lastClaudeProSessionPercent;
     private double _lastClaudeProWeeklyPercent;
+    private double _lastClaudeProExtraUsagePercent;
     private double _lastClaudeProPercent;
     private double _lastGeminiPercent;
     private double _lastOpenAiDirectPercent;
@@ -64,6 +66,8 @@ public partial class MainWindow : Window, ISettingsPanelHost
     private double _lastOpenRouterHeadlinePercent;
     private double _lastFalPercent;
     private double _lastFalHeadlinePercent;
+    private double _lastXaiPercent;
+    private double _lastXaiHeadlinePercent;
     private double _lastGrokBotPercent;
     private double _lastOpenCodeZenPercent;
     private double _lastOpenCodeGoPercent;
@@ -83,17 +87,23 @@ public partial class MainWindow : Window, ISettingsPanelHost
     private double _lastProgressLayoutWidth;
     private double _anchorFromHeight;
     private bool _pendingAnchorCompensation;
+    private double? _settingsAnchorBottom;
     private const double FullWindowWidth = 300;
     private static readonly Thickness FullPadding = new(10, 9, 10, 12);
     private static readonly Thickness CompactPadding = new(8, 5, 8, 5);
     private readonly DispatcherTimer _compactCollapseTimer;
-    private readonly DispatcherTimer _compactAnimTimer;
+    private TimeSpan? _compactAnimLastFrameTime;
+    private Size? _cachedCompactSize;
+    private Size? _cachedFullSize;
+    private bool _compactTransitionSizesDirty = true;
+    private bool _compactGlanceDirty = true;
     private SizeToContent _desiredSizeToContent = SizeToContent.Height;
     private bool _pointerOver;
     private bool _contextMenuOpen;
     private bool _isDragging;
-    private bool _keyboardFocused;
+    private bool _inputFocused;
     private bool _showingCompactRest;
+    private bool _initialPositionApplied;
     private double _compactProgress = 1;
     private bool _compactAnimActive;
     private bool _compactSnapNext;
@@ -139,6 +149,7 @@ public partial class MainWindow : Window, ISettingsPanelHost
             _openRouterBilling,
             _openCodeBilling,
             _falBilling,
+            _xaiBilling,
             _grokBotBilling);
         _refreshService = new UsageRefreshService(_usageClient, _directBilling);
         _debouncedPositionSave = new DebouncedAction(SaveSettings, TimeSpan.FromMilliseconds(400));
@@ -147,6 +158,7 @@ public partial class MainWindow : Window, ISettingsPanelHost
             _claudeProBilling,
             _antigravityBilling,
             fal: _falBilling,
+            xai: _xaiBilling,
             grokBot: _grokBotBilling);
         _settingsViewModel = new SettingsPanelViewModel(
             _easySetup,
@@ -156,6 +168,7 @@ public partial class MainWindow : Window, ISettingsPanelHost
             _openRouterBilling,
             _openCodeBilling,
             falBilling: _falBilling,
+            xaiBilling: _xaiBilling,
             grokBotBilling: _grokBotBilling,
             anthropicBilling: _anthropicBilling,
             claudeProBilling: _claudeProBilling);
@@ -171,7 +184,23 @@ public partial class MainWindow : Window, ISettingsPanelHost
         UpdatePinIconState();
         UpdateAllProviderDetailState();
 
-        SettingsPanelHost.SizeChanged += (_, _) => CompensateAnchorIfNeeded();
+        SettingsPanelHost.SizeChanged += (_, _) =>
+        {
+            if (_compactAnimActive)
+                return;
+
+            InvalidateCompactTransitionSizes();
+            CompensateAnchorIfNeeded();
+        };
+
+        SettingsPanelControl.AddHandler(
+            InputElement.GotFocusEvent,
+            OnSettingsInputFocusChanged,
+            RoutingStrategies.Bubble);
+        SettingsPanelControl.AddHandler(
+            InputElement.LostFocusEvent,
+            OnSettingsInputFocusChanged,
+            RoutingStrategies.Bubble);
 
         _pollTimer = new DispatcherTimer
         {
@@ -186,8 +215,6 @@ public partial class MainWindow : Window, ISettingsPanelHost
             _compactCollapseTimer.Stop();
             ApplyCompactVisualState();
         };
-        _compactAnimTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
-        _compactAnimTimer.Tick += (_, _) => TickCompactAnimation();
         _compactSnapNext = true;
 
         _hardwareTimer = new DispatcherTimer { Interval = HardwareRefreshInterval };
@@ -198,16 +225,24 @@ public partial class MainWindow : Window, ISettingsPanelHost
 
         Opened += async (_, _) =>
         {
+            ApplyInitialPosition();
+            _compactSnapNext = true;
             ApplyCompactVisualState();
-            Dispatcher.UIThread.Post(ApplyInitialPosition, DispatcherPriority.Loaded);
             await RefreshAsync();
         };
         SizeChanged += (_, _) =>
         {
+            if (_compactAnimActive)
+                return;
+
             UpdateAllProgressWidths();
             CompensateAnchorIfNeeded();
         };
-        PositionChanged += (_, _) => _debouncedPositionSave.Invoke();
+        PositionChanged += (_, _) =>
+        {
+            if (ShouldSchedulePinnedPositionSave())
+                _debouncedPositionSave.Invoke();
+        };
         Closing += (_, _) =>
         {
             _debouncedPositionSave.Flush();
@@ -232,6 +267,7 @@ public partial class MainWindow : Window, ISettingsPanelHost
                 height,
                 workingAreas);
             Position = new PixelPoint(x, y);
+            _initialPositionApplied = true;
             if (x != (int)_settings.Left || y != (int)_settings.Top)
             {
                 _settings.Left = x;
@@ -244,12 +280,16 @@ public partial class MainWindow : Window, ISettingsPanelHost
 
         var screen = Screens.Primary;
         if (screen is null)
+        {
+            _initialPositionApplied = true;
             return;
+        }
 
         var area = screen.WorkingArea;
         var (cx, cy) = WindowAnchorHelper.ComputeCenteredPosition(
             area.X, area.Y, area.Width, area.Height, width, height);
         Position = new PixelPoint(cx, cy);
+        _initialPositionApplied = true;
     }
 
     private void PinToggle_PointerPressed(object? sender, PointerPressedEventArgs e)
@@ -259,15 +299,51 @@ public partial class MainWindow : Window, ISettingsPanelHost
 
         _settings.IsPositionPinned = !_settings.IsPositionPinned;
         if (_settings.IsPositionPinned)
-        {
-            _settings.Left = Position.X;
-            _settings.Top = Position.Y;
-        }
+            CapturePinnedOriginForToggle();
 
         UpdatePinIconState();
         SaveSettings();
         e.Handled = true;
     }
+
+    private void CapturePinnedOriginForToggle()
+    {
+        if (_settings.UseCompactMode && !_showingCompactRest)
+        {
+            EnsureCompactTransitionSizes();
+            var compactSize = _cachedCompactSize!.Value;
+            var (x, y) = WindowAnchorHelper.CompensateSizeChange(
+                Bounds.Width,
+                Bounds.Height,
+                compactSize.Width,
+                compactSize.Height,
+                Position.X,
+                Position.Y,
+                GetWorkingAreas());
+            _settings.Left = x;
+            _settings.Top = y;
+            return;
+        }
+
+        _settings.Left = Position.X;
+        _settings.Top = Position.Y;
+    }
+
+    private bool ShouldCapturePinnedPosition() =>
+        PinnedPositionPolicy.ShouldCapture(
+            _settings.IsPositionPinned,
+            _initialPositionApplied,
+            _compactAnimActive,
+            _settings.UseCompactMode,
+            _showingCompactRest);
+
+    private bool ShouldSchedulePinnedPositionSave() =>
+        PinnedPositionPolicy.ShouldSchedulePositionSave(
+            _settings.IsPositionPinned,
+            _initialPositionApplied,
+            _compactAnimActive,
+            _settings.UseCompactMode,
+            _showingCompactRest);
 
     private void RefreshButton_PointerPressed(object? sender, PointerPressedEventArgs e)
     {
@@ -299,10 +375,20 @@ public partial class MainWindow : Window, ISettingsPanelHost
             return;
 
         var oldHeight = Bounds.Height;
+        var wasExpanded = _isSettingsExpanded;
         _isSettingsExpanded = !_isSettingsExpanded;
         UpdateSettingsExpandedState();
-        ApplyCompactVisualState();
-        ScheduleLayoutRefresh(oldHeight);
+        if (wasExpanded && !_isSettingsExpanded)
+        {
+            TopLevel.GetTopLevel(this)?.FocusManager?.ClearFocus();
+            ReconcileCompactInteractionState();
+        }
+        else
+        {
+            ApplyCompactVisualState();
+        }
+
+        ScheduleSettingsLayoutRefresh(oldHeight);
         SaveSettings();
         e.Handled = true;
     }
@@ -319,13 +405,21 @@ public partial class MainWindow : Window, ISettingsPanelHost
         if (!_isSettingsExpanded)
             return;
 
-        ScheduleLayoutRefresh(Bounds.Height);
+        InvalidateCompactTransitionSizes();
+        ScheduleSettingsLayoutRefresh(Bounds.Height);
+    }
+
+    private void ScheduleSettingsLayoutRefresh(double anchorFromHeight)
+    {
+        _settingsAnchorBottom = Position.Y + Bounds.Height;
+        ScheduleLayoutRefresh(anchorFromHeight);
     }
 
     private void ScheduleLayoutRefresh(double anchorFromHeight)
     {
         _anchorFromHeight = anchorFromHeight;
         _pendingAnchorCompensation = true;
+        InvalidateCompactTransitionSizes();
         RefreshWindowHeight();
         Dispatcher.UIThread.Post(() =>
         {
@@ -339,7 +433,7 @@ public partial class MainWindow : Window, ISettingsPanelHost
 
     private void CompensateAnchorIfNeeded()
     {
-        if (!_pendingAnchorCompensation)
+        if (_compactAnimActive || !_pendingAnchorCompensation)
             return;
 
         var newHeight = Bounds.Height;
@@ -347,14 +441,18 @@ public partial class MainWindow : Window, ISettingsPanelHost
             return;
 
         _pendingAnchorCompensation = false;
-        Position = new PixelPoint(
-            Position.X,
-            WindowAnchorHelper.CompensateVerticalGrowth(_anchorFromHeight, newHeight, Position.Y));
+        var newY = _settingsAnchorBottom is { } anchorBottom
+            ? WindowAnchorHelper.ComputeBottomAnchoredY(anchorBottom, newHeight)
+            : WindowAnchorHelper.CompensateVerticalGrowth(_anchorFromHeight, newHeight, Position.Y);
+        _settingsAnchorBottom = null;
+        Position = new PixelPoint(Position.X, newY);
     }
 
     public void OnSettingsChanged()
     {
         var oldHeight = Bounds.Height;
+        InvalidateCompactTransitionSizes();
+        _compactGlanceDirty = true;
         SyncSettingsAndVisibility();
         SaveSettings();
         DiskSpaceProvider.InvalidateCache();
@@ -366,6 +464,8 @@ public partial class MainWindow : Window, ISettingsPanelHost
         ApplyHardwareTimerState();
         _ = SampleHardwareMetricsAsync();
         ScheduleLayoutRefresh(oldHeight);
+        if (!_isSettingsExpanded)
+            ApplyCompactVisualState();
     }
 
     public async Task OnEasySetupCompletedAsync()
@@ -390,6 +490,7 @@ public partial class MainWindow : Window, ISettingsPanelHost
         OpenRouterProviderSection.IsVisible = ProviderDashboardPresenter.IsOpenRouterDashboardVisible(_settings.OpenRouter);
         OpenCodeProviderSection.IsVisible = ProviderDashboardPresenter.IsOpenCodeDashboardVisible(_settings.OpenCode);
         FalProviderSection.IsVisible = ProviderDashboardPresenter.IsFalDashboardVisible(_settings.Fal);
+        XaiProviderSection.IsVisible = ProviderDashboardPresenter.IsXaiDashboardVisible(_settings.Xai);
 
         CursorSection.IsVisible = _settings.Cursor.ShowCursorSource;
         OpenAiSection.IsVisible = _settings.OpenAi.ShowCursorSource;
@@ -404,6 +505,7 @@ public partial class MainWindow : Window, ISettingsPanelHost
         OpenCodeZenSection.IsVisible = _settings.OpenCode.ShowDirectSource;
         OpenCodeGoLimitsSection.IsVisible = _settings.OpenCode.ShowProLimits;
         FalLimitsSection.IsVisible = _settings.Fal.ShowProLimits;
+        XaiLimitsSection.IsVisible = _settings.Xai.ShowProLimits;
 
         ApplyProviderDetailChrome();
     }
@@ -461,6 +563,11 @@ public partial class MainWindow : Window, ISettingsPanelHost
         if (!showFalBalance)
             FalBalanceText.Text = "";
 
+        var showXaiBalance = _settings.Xai.ShowProLimits && _settings.Xai.ShowDetails;
+        XaiBalanceText.IsVisible = showXaiBalance;
+        if (!showXaiBalance)
+            XaiBalanceText.Text = "";
+
         OpenCodeZenDetailText.IsVisible = _settings.OpenCode.ShowDirectSource && _settings.OpenCode.ShowDetails;
         var openCode = _lastSnapshot?.OpenCode;
         var showOpenCodeGoBreakdown = openCode is not null
@@ -483,6 +590,7 @@ public partial class MainWindow : Window, ISettingsPanelHost
         OpenRouterDetailsPanel.IsVisible = true;
         OpenCodeDetailsPanel.IsVisible = true;
         FalDetailsPanel.IsVisible = true;
+        XaiDetailsPanel.IsVisible = true;
         ApplyProviderDetailChrome();
 
         if (_lastSnapshot is null || _lastSnapshot.IsError)
@@ -548,32 +656,51 @@ public partial class MainWindow : Window, ISettingsPanelHost
     private void Window_PointerExited(object? sender, PointerEventArgs e)
     {
         _pointerOver = false;
-        if (CompactHoverController.ShouldShowFullLayout(
-                _settings.UseCompactMode,
-                pointerOver: false,
-                _isSettingsExpanded,
-                _contextMenuOpen,
-                _isDragging,
-                _keyboardFocused))
+        ScheduleCompactCollapseIfNeeded();
+    }
+
+    private void OnSettingsInputFocusChanged(object? sender, RoutedEventArgs e)
+    {
+        RefreshInputFocused();
+        if (_inputFocused)
         {
+            _compactCollapseTimer.Stop();
+            ApplyCompactVisualState();
+            return;
+        }
+
+        ScheduleCompactCollapseIfNeeded();
+    }
+
+    private void RefreshInputFocused()
+    {
+        var focused = TopLevel.GetTopLevel(this)?.FocusManager?.GetFocusedElement();
+        _inputFocused = CompactInteractionTracker.ShouldKeepFullLayoutForFocus(focused);
+    }
+
+    private void ReconcileCompactInteractionState()
+    {
+        RefreshInputFocused();
+        ReconcilePointerOver();
+        ApplyCompactVisualState();
+        ScheduleCompactCollapseIfNeeded();
+    }
+
+    private void ReconcilePointerOver()
+    {
+        _pointerOver = IsPointerOver;
+    }
+
+    private void ScheduleCompactCollapseIfNeeded()
+    {
+        if (ShouldShowFullLayout())
+        {
+            _compactCollapseTimer.Stop();
             return;
         }
 
         _compactCollapseTimer.Stop();
         _compactCollapseTimer.Start();
-    }
-
-    private void Window_GotFocus(object? sender, GotFocusEventArgs e)
-    {
-        _keyboardFocused = true;
-        _compactCollapseTimer.Stop();
-        ApplyCompactVisualState();
-    }
-
-    private void Window_LostFocus(object? sender, RoutedEventArgs e)
-    {
-        _keyboardFocused = false;
-        ApplyCompactVisualState();
     }
 
     private void WidgetContextMenu_Opening(object? sender, CancelEventArgs e)
@@ -622,7 +749,7 @@ public partial class MainWindow : Window, ISettingsPanelHost
             _isSettingsExpanded,
             _contextMenuOpen,
             _isDragging,
-            _keyboardFocused);
+            _inputFocused);
 
     private void UpdateCompactModeChrome()
     {
@@ -661,7 +788,8 @@ public partial class MainWindow : Window, ISettingsPanelHost
             StopCompactAnimation();
             _compactProgress = 1;
             _compactSnapNext = true;
-            ApplyCompactOpacities(1);
+            RestoreCompactLayerVisibility();
+            ApplyCompactOpacities(1, cullLayers: false);
             PillBorder.Padding = FullPadding;
             Width = FullWindowWidth;
             _desiredSizeToContent = SizeToContent.Height;
@@ -687,9 +815,12 @@ public partial class MainWindow : Window, ISettingsPanelHost
         if (!_settings.UseCompactMode)
             return;
 
-        UpdateCompactGlance(_lastSnapshot);
-        var compactSize = MeasureCompactWindowSize();
-        var fullSize = MeasureFullWindowSize();
+        if (_compactGlanceDirty)
+            UpdateCompactGlance(_lastSnapshot);
+
+        EnsureCompactTransitionSizes();
+        var compactSize = _cachedCompactSize!.Value;
+        var fullSize = _cachedFullSize!.Value;
         var areas = GetWorkingAreas();
         var current = new CompactAnimSample(Bounds.Width, Bounds.Height, Position.X, Position.Y);
         var goingFull = targetProgress > 0.5;
@@ -702,6 +833,21 @@ public partial class MainWindow : Window, ISettingsPanelHost
             Position.X,
             Position.Y,
             areas);
+        // Settings open/close always grows from the widget bottom edge, even near the top of the screen.
+        if (_settingsAnchorBottom is { } settingsBottom)
+        {
+            endY = WindowAnchorHelper.ComputeBottomAnchoredY(settingsBottom, endSize.Height);
+            _settingsAnchorBottom = null;
+            _pendingAnchorCompensation = false;
+        }
+        else if (_isSettingsExpanded)
+        {
+            endY = WindowAnchorHelper.ResolveSettingsExpandEndY(
+                Position.Y,
+                current.Height,
+                endSize.Height);
+        }
+
         var end = new CompactAnimSample(endSize.Width, endSize.Height, endX, endY);
         var reduceMotion = PrefersReducedMotion();
 
@@ -710,7 +856,8 @@ public partial class MainWindow : Window, ISettingsPanelHost
             _compactSnapNext = false;
             StopCompactAnimation();
             _compactProgress = targetProgress;
-            ApplyCompactFrame(end, _compactProgress);
+            RestoreCompactLayerVisibility();
+            ApplyCompactFrame(end, _compactProgress, cullLayers: false);
             PersistCompactOriginIfNeeded();
             UpdateAllProgressWidths();
             return;
@@ -721,21 +868,25 @@ public partial class MainWindow : Window, ISettingsPanelHost
         _compactAnimStart = current;
         _compactAnimEnd = end;
         _compactAnimElapsed = TimeSpan.Zero;
+        _compactAnimLastFrameTime = null;
         _compactAnimDuration = CompactLayoutAnimator.DurationFor(_compactProgress, targetProgress);
         _compactAnimActive = true;
-        if (!_compactAnimTimer.IsEnabled)
-            _compactAnimTimer.Start();
+        RequestAnimationFrame(OnCompactAnimationFrame);
     }
 
-    private void TickCompactAnimation()
+    private void OnCompactAnimationFrame(TimeSpan totalTime)
     {
         if (!_compactAnimActive)
-        {
-            _compactAnimTimer.Stop();
             return;
+
+        if (_compactAnimLastFrameTime is { } previous)
+        {
+            var deltaMs = Math.Min((totalTime - previous).TotalMilliseconds, 50);
+            _compactAnimElapsed += TimeSpan.FromMilliseconds(deltaMs);
         }
 
-        _compactAnimElapsed += _compactAnimTimer.Interval;
+        _compactAnimLastFrameTime = totalTime;
+
         var linearT = _compactAnimDuration.TotalMilliseconds <= 0
             ? 1
             : _compactAnimElapsed.TotalMilliseconds / _compactAnimDuration.TotalMilliseconds;
@@ -758,19 +909,26 @@ public partial class MainWindow : Window, ISettingsPanelHost
         {
             StopCompactAnimation();
             _compactProgress = _compactAnimToProgress;
-            ApplyCompactFrame(_compactAnimEnd, _compactProgress);
+            RestoreCompactLayerVisibility();
+            ApplyCompactFrame(_compactAnimEnd, _compactProgress, cullLayers: false);
             PersistCompactOriginIfNeeded();
             UpdateAllProgressWidths();
+            return;
         }
+
+        RequestAnimationFrame(OnCompactAnimationFrame);
     }
 
     private void StopCompactAnimation()
     {
+        if (!_compactAnimActive)
+            return;
+
         _compactAnimActive = false;
-        _compactAnimTimer.Stop();
+        _compactAnimLastFrameTime = null;
     }
 
-    private void ApplyCompactFrame(CompactAnimSample sample, double progress)
+    private void ApplyCompactFrame(CompactAnimSample sample, double progress, bool cullLayers = true)
     {
         Width = Math.Max(1, sample.Width);
         Height = Math.Max(1, sample.Height);
@@ -778,15 +936,41 @@ public partial class MainWindow : Window, ISettingsPanelHost
             (int)Math.Round(sample.X),
             (int)Math.Round(sample.Y));
         PillBorder.Padding = progress > 0.5 ? FullPadding : CompactPadding;
-        ApplyCompactOpacities(progress);
+        ApplyCompactOpacities(progress, cullLayers);
     }
 
-    private void ApplyCompactOpacities(double progress)
+    private void ApplyCompactOpacities(double progress, bool cullLayers = true)
     {
         CompactRow.Opacity = CompactLayoutAnimator.CompactOpacity(progress);
         FullContent.Opacity = CompactLayoutAnimator.FullOpacity(progress);
         CompactRow.IsHitTestVisible = progress < 0.5;
         FullContent.IsHitTestVisible = progress >= 0.5;
+
+        if (!cullLayers)
+            return;
+
+        CompactRow.IsVisible = CompactLayoutAnimator.ShouldRenderCompact(progress);
+        FullContent.IsVisible = CompactLayoutAnimator.ShouldRenderFull(progress);
+    }
+
+    private void RestoreCompactLayerVisibility()
+    {
+        CompactRow.IsVisible = true;
+        FullContent.IsVisible = true;
+    }
+
+    private void InvalidateCompactTransitionSizes() =>
+        _compactTransitionSizesDirty = true;
+
+    private void EnsureCompactTransitionSizes()
+    {
+        if (!_compactTransitionSizesDirty && _cachedCompactSize is not null && _cachedFullSize is not null)
+            return;
+
+        RestoreCompactLayerVisibility();
+        _cachedCompactSize = MeasureCompactWindowSize();
+        _cachedFullSize = MeasureFullWindowSize();
+        _compactTransitionSizesDirty = false;
     }
 
     private Size MeasureCompactWindowSize()
@@ -809,12 +993,12 @@ public partial class MainWindow : Window, ISettingsPanelHost
 
     private void PersistCompactOriginIfNeeded()
     {
-        if (_settings.UseCompactMode && _showingCompactRest && _settings.IsPositionPinned)
-        {
-            _settings.Left = Position.X;
-            _settings.Top = Position.Y;
-            SaveSettings();
-        }
+        if (!ShouldCapturePinnedPosition())
+            return;
+
+        _settings.Left = Position.X;
+        _settings.Top = Position.Y;
+        SaveSettings();
     }
 
     private void UpdateCompactGlance(UsageSnapshot? snapshot)
@@ -837,9 +1021,13 @@ public partial class MainWindow : Window, ISettingsPanelHost
             });
         }
 
+        _compactGlanceDirty = false;
+        InvalidateCompactTransitionSizes();
+
         if (_settings.UseCompactMode && _showingCompactRest && !_compactAnimActive)
         {
-            var size = MeasureCompactWindowSize();
+            EnsureCompactTransitionSizes();
+            var size = _cachedCompactSize!.Value;
             Width = size.Width;
             Height = size.Height;
         }
@@ -972,6 +1160,12 @@ public partial class MainWindow : Window, ISettingsPanelHost
             pro.WeeklyResetsAt,
             showResetLabels,
             ResetProgress(pro.WeeklyResetsAt, UsageBarColors.WeeklyWindow));
+        ClaudeProExtraUsageSection.IsVisible = showNestedBreakdown && pro.ExtraUsageIsAvailable;
+        ProviderLimitsPresenter.ApplyResetLabel(
+            ClaudeProExtraUsageResetText,
+            pro.ExtraUsageResetsAt,
+            showResetLabels && pro.ExtraUsageIsAvailable,
+            ResetProgress(pro.ExtraUsageResetsAt, UsageBarColors.MonthlyWindow));
     }
 
     private void ApplyAntigravityLimitsBreakdownLayout(ProviderBillingSettings options, AntigravitySnapshot antigravity)
@@ -1405,6 +1599,8 @@ public partial class MainWindow : Window, ISettingsPanelHost
     private void ApplySnapshot(UsageSnapshot snapshot)
     {
         _lastSnapshot = snapshot;
+        _compactGlanceDirty = true;
+        InvalidateCompactTransitionSizes();
         UpdateCompactGlance(snapshot);
 
         if (snapshot.IsError)
@@ -1428,6 +1624,7 @@ public partial class MainWindow : Window, ISettingsPanelHost
             OpenRouterProviderSection.IsVisible = false;
             OpenCodeProviderSection.IsVisible = false;
             FalProviderSection.IsVisible = false;
+            XaiProviderSection.IsVisible = false;
             ScheduleLayoutRefresh(oldHeight);
             return;
         }
@@ -1466,6 +1663,7 @@ public partial class MainWindow : Window, ISettingsPanelHost
         ApplyOpenRouterBars(snapshot.OpenRouter, _settings.OpenRouter);
         ApplyOpenCodeBars(snapshot.OpenCode, _settings.OpenCode);
         ApplyFalBars(snapshot.Fal, _settings.Fal);
+        ApplyXaiBars(snapshot.Xai, _settings.Xai);
         ApplyProviderHeadlines(snapshot);
         SyncSettingsAndVisibility();
         // Sub-bars inside collapsed/unmeasured panels skip width updates; refresh after layout.
@@ -1540,6 +1738,15 @@ public partial class MainWindow : Window, ISettingsPanelHost
             ref _lastFalHeadlinePercent,
             falPercent,
             falConnected);
+
+        var xaiConnected = ProviderDashboardPresenter.IsXaiHeadlineConnected(snapshot, _settings.Xai);
+        var xaiPercent = ProviderDashboardPresenter.ComputeXaiHeadline(snapshot, _settings.Xai);
+        ApplyHeadlineBar(
+            XaiHeadlineTrack,
+            XaiHeadlineFill,
+            ref _lastXaiHeadlinePercent,
+            xaiPercent,
+            xaiConnected);
     }
 
     private static void ApplyHeadlineBar(Grid track, Border fill, ref double lastPercent, double percent, bool connected)
@@ -1639,7 +1846,7 @@ public partial class MainWindow : Window, ISettingsPanelHost
         if (!options.ShowProLimits)
             return;
 
-        var headline = ProviderLimitsPresenter.HeadlinePercent(pro.SessionPercentUsed, pro.WeeklyPercentUsed);
+        var headline = ProviderLimitsPresenter.ComputeClaudeProHeadline(pro);
         ProviderLimitsPresenter.ApplyHeadline(
             headline,
             pro.IsAvailable,
@@ -1665,6 +1872,15 @@ public partial class MainWindow : Window, ISettingsPanelHost
             ref _lastClaudeProWeeklyPercent,
             pro.WeeklyPercentUsed,
             pro.IsAvailable);
+        ProviderLimitsPresenter.ApplyBreakdownSubBar(
+            ClaudeProExtraUsageProgressTrack,
+            ClaudeProExtraUsageProgressFill,
+            ClaudeProExtraUsagePercentText,
+            ref _lastClaudeProExtraUsagePercent,
+            pro.ExtraUsagePercentUsed,
+            pro.ExtraUsageIsAvailable);
+        if (pro.ExtraUsageIsAvailable)
+            ClaudeProExtraUsagePercentText.Text = ProviderLimitsPresenter.FormatClaudeProExtraUsagePercent(pro);
     }
 
     private void ApplyAntigravityBars(AntigravitySnapshot antigravity, ProviderBillingSettings options)
@@ -1744,6 +1960,27 @@ public partial class MainWindow : Window, ISettingsPanelHost
         var showBalance = options.ShowDetails && fal.IsAvailable;
         FalBalanceText.Text = showBalance ? fal.DetailLabel : "";
         FalBalanceText.IsVisible = showBalance;
+    }
+
+    private void ApplyXaiBars(XaiSnapshot xai, ProviderBillingSettings options)
+    {
+        if (!options.ShowProLimits)
+            return;
+
+        ProviderLimitsPresenter.ApplyBreakdownSubBar(
+            XaiProgressTrack,
+            XaiProgressFill,
+            XaiPercentText,
+            ref _lastXaiPercent,
+            xai.HeadlinePercentUsed,
+            xai.IsAvailable);
+
+        if (!xai.IsAvailable)
+            XaiPercentText.Text = xai.StatusMessage ?? "—";
+
+        var showBalance = options.ShowDetails && xai.IsAvailable;
+        XaiBalanceText.Text = showBalance ? xai.DetailLabel : "";
+        XaiBalanceText.IsVisible = showBalance;
     }
 
     private void ApplyOpenCodeBars(OpenCodeSnapshot openCode, ProviderBillingSettings options)
@@ -1916,6 +2153,7 @@ public partial class MainWindow : Window, ISettingsPanelHost
         _lastClaudePercent = 0;
         _lastClaudeProSessionPercent = 0;
         _lastClaudeProWeeklyPercent = 0;
+        _lastClaudeProExtraUsagePercent = 0;
         _lastClaudeProPercent = 0;
         _lastGeminiPercent = 0;
         _lastOpenAiDirectPercent = 0;
@@ -1929,6 +2167,8 @@ public partial class MainWindow : Window, ISettingsPanelHost
         _lastOpenRouterHeadlinePercent = 0;
         _lastFalPercent = 0;
         _lastFalHeadlinePercent = 0;
+        _lastXaiPercent = 0;
+        _lastXaiHeadlinePercent = 0;
         _lastGrokBotPercent = 0;
         _lastOpenCodeZenPercent = 0;
         _lastOpenCodeGoPercent = 0;
@@ -1948,6 +2188,7 @@ public partial class MainWindow : Window, ISettingsPanelHost
         ClaudeProProgressFill.Width = 0;
         ClaudeProSessionProgressFill.Width = 0;
         ClaudeProWeeklyProgressFill.Width = 0;
+        ClaudeProExtraUsageProgressFill.Width = 0;
         GeminiProgressFill.Width = 0;
         OpenAiDirectProgressFill.Width = 0;
         ClaudeDirectProgressFill.Width = 0;
@@ -1958,6 +2199,7 @@ public partial class MainWindow : Window, ISettingsPanelHost
         AntigravityThirdPartyWeeklyProgressFill.Width = 0;
         OpenRouterProgressFill.Width = 0;
         FalProgressFill.Width = 0;
+        XaiProgressFill.Width = 0;
         GrokBotProgressFill.Width = 0;
         OpenCodeZenProgressFill.Width = 0;
         OpenCodeGoProgressFill.Width = 0;
@@ -1972,6 +2214,7 @@ public partial class MainWindow : Window, ISettingsPanelHost
         ClaudeProProgressTrack.Opacity = 0.45;
         ClaudeProSessionProgressTrack.Opacity = 0.45;
         ClaudeProWeeklyProgressTrack.Opacity = 0.45;
+        ClaudeProExtraUsageProgressTrack.Opacity = 0.45;
         GeminiProgressTrack.Opacity = 0.45;
         OpenAiDirectProgressTrack.Opacity = 0.45;
         ClaudeDirectProgressTrack.Opacity = 0.45;
@@ -1982,6 +2225,7 @@ public partial class MainWindow : Window, ISettingsPanelHost
         AntigravityThirdPartyWeeklyProgressTrack.Opacity = 0.45;
         OpenRouterProgressTrack.Opacity = 0.45;
         FalProgressTrack.Opacity = 0.45;
+        XaiProgressTrack.Opacity = 0.45;
         GrokBotProgressTrack.Opacity = 0.45;
         OpenCodeZenProgressTrack.Opacity = 0.45;
         OpenCodeGoProgressTrack.Opacity = 0.45;
@@ -1995,6 +2239,7 @@ public partial class MainWindow : Window, ISettingsPanelHost
         OpenRouterHeadlineFill.Width = 0;
         OpenCodeHeadlineFill.Width = 0;
         FalHeadlineFill.Width = 0;
+        XaiHeadlineFill.Width = 0;
         OpenAiDetailText.IsVisible = false;
         ClaudeDetailText.IsVisible = false;
         GeminiDetailText.IsVisible = false;
@@ -2020,6 +2265,7 @@ public partial class MainWindow : Window, ISettingsPanelHost
             ProviderBarPresenter.UpdateProgressWidth(OpenRouterHeadlineTrack, OpenRouterHeadlineFill, _lastOpenRouterHeadlinePercent);
             ProviderBarPresenter.UpdateProgressWidth(OpenCodeHeadlineTrack, OpenCodeHeadlineFill, _lastOpenCodeHeadlinePercent);
             ProviderBarPresenter.UpdateProgressWidth(FalHeadlineTrack, FalHeadlineFill, _lastFalHeadlinePercent);
+            ProviderBarPresenter.UpdateProgressWidth(XaiHeadlineTrack, XaiHeadlineFill, _lastXaiHeadlinePercent);
             ProviderBarPresenter.UpdateProgressWidth(OpenAiProgressTrack, OpenAiProgressFill, _lastOpenAiPercent);
             ProviderBarPresenter.UpdateProgressWidth(ClaudeProgressTrack, ClaudeProgressFill, _lastClaudePercent);
             ProviderBarPresenter.UpdateProgressWidth(GeminiProgressTrack, GeminiProgressFill, _lastGeminiPercent);
@@ -2047,11 +2293,13 @@ public partial class MainWindow : Window, ISettingsPanelHost
         ProviderBarPresenter.UpdateProgressWidth(AntigravityProgressTrack, AntigravityProgressFill, _lastAntigravityPercent);
         ProviderBarPresenter.UpdateProgressWidth(OpenRouterProgressTrack, OpenRouterProgressFill, _lastOpenRouterPercent);
         ProviderBarPresenter.UpdateProgressWidth(FalProgressTrack, FalProgressFill, _lastFalPercent);
+        ProviderBarPresenter.UpdateProgressWidth(XaiProgressTrack, XaiProgressFill, _lastXaiPercent);
         ProviderBarPresenter.UpdateProgressWidth(OpenCodeGoProgressTrack, OpenCodeGoProgressFill, _lastOpenCodeGoPercent);
         ProviderBarPresenter.UpdateProgressWidth(CodexSessionProgressTrack, CodexSessionProgressFill, _lastCodexSessionPercent);
         ProviderBarPresenter.UpdateProgressWidth(CodexWeeklyProgressTrack, CodexWeeklyProgressFill, _lastCodexWeeklyPercent);
         ProviderBarPresenter.UpdateProgressWidth(ClaudeProSessionProgressTrack, ClaudeProSessionProgressFill, _lastClaudeProSessionPercent);
         ProviderBarPresenter.UpdateProgressWidth(ClaudeProWeeklyProgressTrack, ClaudeProWeeklyProgressFill, _lastClaudeProWeeklyPercent);
+        ProviderBarPresenter.UpdateProgressWidth(ClaudeProExtraUsageProgressTrack, ClaudeProExtraUsageProgressFill, _lastClaudeProExtraUsagePercent);
         ProviderBarPresenter.UpdateProgressWidth(AntigravityGeminiSessionProgressTrack, AntigravityGeminiSessionProgressFill, _lastAntigravityGeminiSessionPercent);
         ProviderBarPresenter.UpdateProgressWidth(AntigravityGeminiWeeklyProgressTrack, AntigravityGeminiWeeklyProgressFill, _lastAntigravityGeminiWeeklyPercent);
         ProviderBarPresenter.UpdateProgressWidth(AntigravityThirdPartySessionProgressTrack, AntigravityThirdPartySessionProgressFill, _lastAntigravityThirdPartySessionPercent);
@@ -2064,6 +2312,7 @@ public partial class MainWindow : Window, ISettingsPanelHost
         CodexWeeklyProgressFill.Background = UsageBarBrushes.GetBrushForPercent(_lastCodexWeeklyPercent);
         ClaudeProSessionProgressFill.Background = UsageBarBrushes.GetBrushForPercent(_lastClaudeProSessionPercent);
         ClaudeProWeeklyProgressFill.Background = UsageBarBrushes.GetBrushForPercent(_lastClaudeProWeeklyPercent);
+        ClaudeProExtraUsageProgressFill.Background = UsageBarBrushes.GetBrushForPercent(_lastClaudeProExtraUsagePercent);
         AntigravityGeminiSessionProgressFill.Background = UsageBarBrushes.GetBrushForPercent(_lastAntigravityGeminiSessionPercent);
         AntigravityGeminiWeeklyProgressFill.Background = UsageBarBrushes.GetBrushForPercent(_lastAntigravityGeminiWeeklyPercent);
         AntigravityThirdPartySessionProgressFill.Background = UsageBarBrushes.GetBrushForPercent(_lastAntigravityThirdPartySessionPercent);
@@ -2258,12 +2507,13 @@ public partial class MainWindow : Window, ISettingsPanelHost
         ToolTip.SetTip(OpenRouterDetailsPanel, _widgetViewModel.OpenRouter.DegradedMessage);
         ToolTip.SetTip(OpenCodeDetailsPanel, _widgetViewModel.OpenCode.DegradedMessage);
         ToolTip.SetTip(FalDetailsPanel, _widgetViewModel.Fal.DegradedMessage);
+        ToolTip.SetTip(XaiDetailsPanel, _widgetViewModel.Xai.DegradedMessage);
     }
 
     private void SaveSettings()
     {
         SettingsPanelControl.CommitToSettings(_settings);
-        if (_settings.IsPositionPinned && (!_settings.UseCompactMode || _showingCompactRest))
+        if (ShouldCapturePinnedPosition())
         {
             _settings.Left = Position.X;
             _settings.Top = Position.Y;
@@ -2277,6 +2527,7 @@ public partial class MainWindow : Window, ISettingsPanelHost
         _settings.IsOpenRouterProviderExpanded = true;
         _settings.IsOpenCodeProviderExpanded = true;
         _settings.IsFalProviderExpanded = true;
+        _settings.IsXaiProviderExpanded = true;
         _settings.SettingsExpandedProvider = _settingsViewModel.ExpandedProvider;
         SettingsStore.Save(_settings);
     }
@@ -2286,7 +2537,7 @@ public partial class MainWindow : Window, ISettingsPanelHost
         _pollTimer.Stop();
         _hardwareTimer.Stop();
         _compactCollapseTimer.Stop();
-        _compactAnimTimer.Stop();
+        StopCompactAnimation();
         _debouncedPositionSave.Dispose();
         _refreshService.Dispose();
         _hardwareMetricsProvider.Dispose();
@@ -2300,6 +2551,8 @@ public partial class MainWindow : Window, ISettingsPanelHost
         _openRouterBilling.Dispose();
         _openCodeBilling.Dispose();
         _falBilling.Dispose();
+        _xaiBilling.Dispose();
+        _grokBotBilling.Dispose();
         base.OnClosed(e);
     }
 }

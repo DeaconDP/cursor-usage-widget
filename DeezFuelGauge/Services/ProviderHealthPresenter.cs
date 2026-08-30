@@ -10,12 +10,15 @@ public static class ProviderHealthPresenter
         ["openrouter"] = "OpenRouter",
         ["opencode"] = "OpenCode",
         ["fal"] = "fal.ai",
+        ["xai"] = "xAI",
         ["grokbot"] = "Grok Bot"
     };
 
     public static string FormatDegradedMessage(string providerKey, string? detail) =>
         ProviderLabels.TryGetValue(providerKey, out var label)
-            ? $"{label} unavailable — API may have changed"
+            ? string.IsNullOrWhiteSpace(detail)
+                ? $"{label} unavailable — API may have changed"
+                : $"{label} unavailable — {detail}"
             : detail ?? "Provider unavailable";
 
     public static string FormatHeadlineBadge(string? degradedMessage) =>

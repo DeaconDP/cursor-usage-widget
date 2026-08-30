@@ -222,6 +222,27 @@ public sealed class ProviderDashboardPresenterTests
     }
 
     [Fact]
+    public void ComputeClaudeHeadline_includes_extra_usage_monthly_when_highest()
+    {
+        var snapshot = new UsageSnapshot
+        {
+            ClaudePro = ClaudeProSnapshot.FromUsage(
+                12,
+                40,
+                null,
+                null,
+                extraUsageIsAvailable: true,
+                extraUsagePercentRaw: 235,
+                extraUsageUsedUsd: 46.93m,
+                extraUsageLimitUsd: 20m,
+                extraUsageResetsAt: DateTimeOffset.UtcNow.AddDays(5))
+        };
+        var settings = new ProviderBillingSettings { ShowProLimits = true };
+
+        Assert.Equal(235, ProviderDashboardPresenter.ComputeClaudeHeadline(snapshot, settings));
+    }
+
+    [Fact]
     public void ComputeGeminiHeadline_uses_antigravity_only()
     {
         var gemini = AntigravityGroupSnapshot.FromUsage(80, 60, null, null);
@@ -370,15 +391,59 @@ public sealed class ProviderDashboardPresenterTests
     }
 
     [Fact]
-    public void ComputeFalHeadline_uses_low_balance_heuristic()
+    public void ComputeFalHeadline_uses_prepaid_baseline_percent()
+    {
+        var falSettings = new ProviderBillingSettings
+        {
+            ShowProLimits = true,
+            CreditBaselineUsd = 12,
+            LastObservedBalanceUsd = 12
+        };
+        var percent = PrepaidCreditBaselineTracker.Update(falSettings, 3);
+        var snapshot = new UsageSnapshot
+        {
+            Fal = FalSnapshot.FromBalance(3, percentUsed: percent)
+        };
+
+        Assert.Equal(75, ProviderDashboardPresenter.ComputeFalHeadline(snapshot, falSettings));
+    }
+
+    [Fact]
+    public void IsXaiHeadlineConnected_true_when_available()
     {
         var snapshot = new UsageSnapshot
         {
-            Fal = FalSnapshot.FromBalance(3)
+            Xai = XaiSnapshot.FromBalance(24.5)
         };
         var settings = new ProviderBillingSettings { ShowProLimits = true };
 
-        Assert.Equal(75, ProviderDashboardPresenter.ComputeFalHeadline(snapshot, settings));
+        Assert.True(ProviderDashboardPresenter.IsXaiHeadlineConnected(snapshot, settings));
+        Assert.Equal(0, ProviderDashboardPresenter.ComputeXaiHeadline(snapshot, settings));
+    }
+
+    [Fact]
+    public void ComputeXaiHeadline_uses_prepaid_baseline_percent()
+    {
+        var xaiSettings = new ProviderBillingSettings
+        {
+            ShowProLimits = true,
+            CreditBaselineUsd = 12,
+            LastObservedBalanceUsd = 12
+        };
+        var percent = PrepaidCreditBaselineTracker.Update(xaiSettings, 3);
+        var snapshot = new UsageSnapshot
+        {
+            Xai = XaiSnapshot.FromBalance(3, percentUsed: percent)
+        };
+
+        Assert.Equal(75, ProviderDashboardPresenter.ComputeXaiHeadline(snapshot, xaiSettings));
+    }
+
+    [Fact]
+    public void IsXaiDashboardVisible_follows_show_pro_limits()
+    {
+        Assert.True(ProviderDashboardPresenter.IsXaiDashboardVisible(new ProviderBillingSettings { ShowProLimits = true }));
+        Assert.False(ProviderDashboardPresenter.IsXaiDashboardVisible(new ProviderBillingSettings { ShowProLimits = false }));
     }
 
     [Fact]

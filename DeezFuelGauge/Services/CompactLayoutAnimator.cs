@@ -8,9 +8,11 @@ public readonly record struct CompactAnimSample(
 
 public static class CompactLayoutAnimator
 {
-    public static readonly TimeSpan ExpandDuration = TimeSpan.FromMilliseconds(280);
-    public static readonly TimeSpan CollapseDuration = TimeSpan.FromMilliseconds(220);
-    public const double FullFadeStart = 0.30;
+    public static readonly TimeSpan ExpandDuration = TimeSpan.FromMilliseconds(220);
+    public static readonly TimeSpan CollapseDuration = TimeSpan.FromMilliseconds(170);
+    public const double FullFadeStart = 0.20;
+    public const double CompactCullThreshold = 0.95;
+    public const double FullCullThreshold = 0.05;
 
     public static double EaseOutCubic(double t)
     {
@@ -24,8 +26,20 @@ public static class CompactLayoutAnimator
         return t * t * t;
     }
 
+    public static double EaseOutQuad(double t)
+    {
+        t = Math.Clamp(t, 0, 1);
+        return 1 - (1 - t) * (1 - t);
+    }
+
+    public static double EaseInQuad(double t)
+    {
+        t = Math.Clamp(t, 0, 1);
+        return t * t;
+    }
+
     public static double ApplyEase(double linearT, bool expanding) =>
-        expanding ? EaseOutCubic(linearT) : EaseInCubic(linearT);
+        expanding ? EaseOutQuad(linearT) : EaseInQuad(linearT);
 
     public static double Lerp(double a, double b, double t) => a + (b - a) * t;
 
@@ -39,6 +53,12 @@ public static class CompactLayoutAnimator
 
         return Math.Clamp((progress - FullFadeStart) / (1 - FullFadeStart), 0, 1);
     }
+
+    public static bool ShouldRenderCompact(double progress) =>
+        progress < CompactCullThreshold;
+
+    public static bool ShouldRenderFull(double progress) =>
+        progress > FullCullThreshold;
 
     public static TimeSpan DurationFor(double fromProgress, double toProgress)
     {

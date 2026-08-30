@@ -49,6 +49,46 @@ public sealed class WindowAnchorHelperTests
         Assert.Equal(anchorBottom, result + height, precision: 5);
     }
 
+    [Theory]
+    [InlineData(200, 100, 150, 150)] // grow: Y moves up by 50
+    [InlineData(200, 150, 100, 250)] // shrink: Y moves down by 50
+    [InlineData(40, 36, 260, -184)] // near top of screen still grows upward
+    public void ResolveSettingsExpandEndY_keeps_bottom_edge_fixed(
+        int currentY,
+        double currentHeight,
+        double newHeight,
+        int expectedY)
+    {
+        var result = WindowAnchorHelper.ResolveSettingsExpandEndY(currentY, currentHeight, newHeight);
+        Assert.Equal(expectedY, result);
+        Assert.Equal(currentY + currentHeight, result + newHeight, precision: 5);
+    }
+
+    [Fact]
+    public void ResolveSettingsExpandEndY_prefers_bottom_lock_even_when_nearer_top_than_CompensateSizeChange()
+    {
+        var areas = new[] { (0, 0, 1920, 1080) };
+        const int currentX = 40;
+        const int currentY = 40;
+        const double currentHeight = 36;
+        const double newHeight = 260;
+
+        var (_, edgeAwareY) = WindowAnchorHelper.CompensateSizeChange(
+            oldWidth: 140,
+            oldHeight: currentHeight,
+            newWidth: 300,
+            newHeight: newHeight,
+            currentX: currentX,
+            currentY: currentY,
+            areas);
+
+        var settingsY = WindowAnchorHelper.ResolveSettingsExpandEndY(currentY, currentHeight, newHeight);
+
+        Assert.Equal(40, edgeAwareY); // edge-aware keeps top when near top
+        Assert.Equal(40 + 36 - 260, settingsY); // settings always bottom-locks
+        Assert.True(settingsY < edgeAwareY);
+    }
+
     [Fact]
     public void ComputeCenteredPosition_clamps_to_work_area_origin_when_window_is_larger()
     {

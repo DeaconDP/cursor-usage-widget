@@ -27,7 +27,7 @@ public sealed class FalUsageClient : IDisposable
 
         try
         {
-            var snapshot = await FetchBillingAsync(apiKey, cancellationToken);
+            var snapshot = await FetchBillingAsync(apiKey, settings, cancellationToken);
             settings.LastConnectionStatus = snapshot.IsAvailable ? "Connected" : (snapshot.StatusMessage ?? "Unavailable");
             return snapshot;
         }
@@ -50,7 +50,7 @@ public sealed class FalUsageClient : IDisposable
 
         try
         {
-            var snapshot = await FetchBillingAsync(apiKey, cancellationToken);
+            var snapshot = await FetchBillingAsync(apiKey, settings: null, cancellationToken);
             return snapshot.IsAvailable ? "Connected" : (snapshot.StatusMessage ?? "Unavailable");
         }
         catch (FalUsageException ex)
@@ -63,7 +63,7 @@ public sealed class FalUsageClient : IDisposable
         }
     }
 
-    internal static FalSnapshot ParseBillingResponse(JsonElement root)
+    internal static FalSnapshot ParseBillingResponse(JsonElement root, ProviderBillingSettings? settings = null)
     {
         if (!root.TryGetProperty("credits", out var credits) || credits.ValueKind != JsonValueKind.Object)
             throw new FalUsageException("Billing response missing credits (use Admin API key)");
@@ -76,24 +76,31 @@ public sealed class FalUsageClient : IDisposable
             ? currencyEl.GetString()
             : "USD";
 
-        return FalSnapshot.FromBalance(balance, currency);
+        var percent = settings is null
+            ? PrepaidCreditBaselineTracker.ComputePercentUsed(Math.Max(balance, 0), balance)
+            : PrepaidCreditBaselineTracker.Update(settings, balance);
+
+        return FalSnapshot.FromBalance(balance, currency, percent);
     }
 
-    private async Task<FalSnapshot> FetchBillingAsync(string apiKey, CancellationToken cancellationToken)
+    private async Task<FalSnapshot> FetchBillingAsync(
+        string apiKey,
+        ProviderBillingSettings? settings,
+        CancellationToken cancellationToken)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, BillingUrl);
         request.Headers.Authorization = new AuthenticationHeaderValue("Key", apiKey.Trim());
 
         using var response = await _http.SendAsync(request, cancellationToken);
-        if (response.StatusCode is System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden)
-            throw new FalUsageException("Invalid or non-Admin API key");
-
         if (!response.IsSuccessStatusCode)
-            throw new FalUsageException($"Billing request failed ({(int)response.StatusCode})");
+        {
+            var body = await response.Content.ReadAsStringAsync(cancellationToken);
+            throw FalUsageException.FromResponse(response.StatusCode, body);
+        }
 
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
         using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
-        return ParseBillingResponse(doc.RootElement);
+        return ParseBillingResponse(doc.RootElement, settings);
     }
 
     public void Dispose()
@@ -106,4 +113,35 @@ public sealed class FalUsageClient : IDisposable
 public sealed class FalUsageException : Exception
 {
     public FalUsageException(string message) : base(message) { }
+
+    public static FalUsageException FromResponse(System.Net.HttpStatusCode status, string body)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            if (doc.RootElement.TryGetProperty("error", out var error)
+                && error.ValueKind == JsonValueKind.Object
+                && error.TryGetProperty("message", out var messageEl))
+            {
+                var msg = messageEl.GetString();
+                if (!string.IsNullOrWhiteSpace(msg))
+                    return new FalUsageException(msg);
+            }
+        }
+        catch
+        {
+            // ignore parse errors
+        }
+
+        return status switch
+        {
+            System.Net.HttpStatusCode.Unauthorized =>
+                new FalUsageException("Invalid or revoked Admin API key — create a new one at fal.ai/dashboard/keys"),
+            System.Net.HttpStatusCode.Forbidden =>
+                new FalUsageException("Admin scope required for billing — check key scope and account/team in the fal dashboard"),
+            System.Net.HttpStatusCode.TooManyRequests =>
+                new FalUsageException("Rate limited — wait a moment and try again"),
+            _ => new FalUsageException($"Billing request failed ({(int)status})")
+        };
+    }
 }

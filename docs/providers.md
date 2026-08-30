@@ -9,6 +9,7 @@ Configure sources from the **gear** in the widget header. Toggle **Cursor**, **C
 | **Claude** | — | **Claude.ai** plan windows | **Claude API** Console Admin key + budget |
 | **Gemini** | Aggregated from your Cursor plan | **Gemini App** limits (5h + weekly) via Antigravity IDE or Gemini CLI (`gemini login` → `~/.gemini/oauth_creds.json`) | Not metered yet |
 | **fal.ai** | — | — | Prepaid **credit balance remaining** via Admin API key |
+| **xAI** | — | — | Prepaid **credit balance remaining** via Management API key + team ID |
 
 - **Easy setup** (per provider section) turns on subscription-limit bars, checks local auth, runs the same connection tests as **Test**, and opens login pages or `codex login` when manual steps are still needed.
 - **Spend details** shows remaining quota (Cursor) or dollar/token breakdown (API).
@@ -29,7 +30,7 @@ Tries prepaid credit balance via an undocumented `credit_grants` endpoint (best-
 
 ## Claude
 
-**Claude.ai** plan rate limits (OAuth / Claude Code login) are separate from **Claude API** Console spend.
+**Claude.ai** plan rate limits (OAuth / Claude Code login) are separate from **Claude API** Console spend. When **Usage credits** (extra usage) are enabled on your Pro or Max plan, Claude also enforces a **monthly spend limit** for pay-as-you-go usage after plan windows are exhausted. The fuel gauge reads this from the same Claude usage API as the 5-hour and weekly bars (`extra_usage` inline, plus `overage_spend_limit` when signed in via session cookie). Enable **Claude.ai** limits in Settings and sign in with Claude (or run `claude login`) to see all three rows: 5h, weekly, and monthly spend.
 
 ## Gemini App (limits)
 
@@ -37,7 +38,23 @@ Sign in to **Antigravity IDE** on this machine, or run **`gemini login`** with t
 
 ## fal.ai (credits)
 
-Paste an **Admin** API key from [fal.ai/dashboard/keys](https://fal.ai/dashboard/keys). The widget calls `GET /v1/account/billing?expand=credits` and shows **remaining balance** (fal does not expose total purchased / lifetime used). The bar uses a low-balance heuristic (same idea as OpenCode Zen): empty when balance is `$0`, then rising pressure as remaining drops through `$10` / `$5` / `$1`. Quota alerts can fire when that heuristic reaches your unused-quota threshold.
+Paste an **Admin** API key from [fal.ai/dashboard/keys](https://fal.ai/dashboard/keys). Choose **ADMIN** scope (not API) and confirm the correct **personal or team** account is selected in the dashboard before creating the key. API keys do not expire on their own — create a new one only if the old key was deleted or revoked. **Prepaid credits** can expire (see [fal billing dashboard](https://fal.ai/dashboard/billing)); that is separate from key validity.
+
+The widget calls `GET /v1/account/billing?expand=credits` and shows **remaining balance** (fal does not expose total purchased / lifetime used). The bar tracks an observed **prepaid baseline**: first successful balance seeds the tank size; when remaining credit **increases** (a top-up), the baseline becomes the new remaining total (e.g. `$1` left then load `$25` → `$26` baseline). Percent used is `(baseline − remaining) / baseline`. Quota alerts fire when that percent reaches your unused-quota threshold.
+
+**Troubleshooting:** `401` usually means an invalid or revoked key — paste a fresh Admin key. `403` usually means API scope or the wrong account/team — recreate the key under the account whose balance you want.
+
+## xAI (credits)
+
+Paste a **Management API key** from [console.x.ai](https://console.x.ai) → **Settings → Management Keys**. This is a different key from **API Keys** (inference / Grok chat). Using an API key against the Management API returns **invalid bearer token**. This meter is also separate from **Grok Bot** (Cursor Ultra weekly allowance).
+
+For **team-scoped** Management keys, the widget resolves the **team UUID** automatically via `GET /auth/management-keys/validation`. You only need to paste a team UUID when the key is **organization-scoped**, or when auto-detect fails. Do **not** paste the `default` slug from the console URL — that is not a team id (billing expects a UUID like `65c1e471-…`).
+
+The widget calls `GET https://management-api.x.ai/v1/billing/teams/{team_id}/prepaid/balance` and shows **remaining balance**. xAI reports an inverted ledger in string USD cents (a `$10` top-up appears as `"-1000"`). The bar uses the same observed **prepaid baseline** as fal.ai: first successful balance seeds the tank; top-ups raise the baseline; percent used is `(baseline − remaining) / baseline`. Quota alerts fire when that percent reaches your unused-quota threshold.
+
+**Note:** Spend is often posted to the prepaid ledger at billing-cycle close, so mid-cycle the API balance can be higher than the live Console remaining by the current cycle’s not-yet-posted spend.
+
+**Troubleshooting:** **invalid bearer token** / `401` means you pasted an API (inference) key — create a **Management** key under Settings → Management Keys. `403` usually means missing billing ACL. Errors mentioning **uuid** / team not found usually mean the team field was empty, set to `default`, or belongs to a different team — leave Team UUID blank to auto-detect, or paste the UUID from team settings.
 
 ## Settings location
 
@@ -60,3 +77,4 @@ Encrypted API keys: `credentials/` in the same folder.
 6. Optionally fetches **Gemini App** grouped Gemini and third-party 5-hour and weekly limits from Google Cloud Code when Antigravity IDE or Gemini CLI is signed in locally.
 7. Optionally fetches **OpenAI API** prepaid credits (`credit_grants`, best-effort) or Admin Platform spend vs budget when configured in settings.
 8. Optionally fetches **fal.ai** prepaid credit balance via the official Platform billing API when an Admin key is saved.
+9. Optionally fetches **xAI** prepaid credit balance via the Management API when a Management key and team ID are saved.

@@ -78,6 +78,9 @@ public sealed class UsageRefreshService : IDisposable
         if (settings.Fal.ShowProLimits)
             statuses["fal"] = StatusFromFal(snapshot.Fal);
 
+        if (settings.Xai.ShowProLimits)
+            statuses["xai"] = StatusFromXai(snapshot.Xai);
+
         if (settings.GrokBot.ShowProLimits)
             statuses["grokbot"] = StatusFromGrokBot(snapshot.GrokBot);
 
@@ -110,6 +113,11 @@ public sealed class UsageRefreshService : IDisposable
             : ProviderRefreshStatus.Failed(snapshot.StatusMessage ?? "Unavailable", degraded: true);
 
     private static ProviderRefreshStatus StatusFromFal(FalSnapshot snapshot) =>
+        snapshot.IsAvailable
+            ? ProviderRefreshStatus.Ok()
+            : ProviderRefreshStatus.Failed(snapshot.StatusMessage ?? "Unavailable", degraded: true);
+
+    private static ProviderRefreshStatus StatusFromXai(XaiSnapshot snapshot) =>
         snapshot.IsAvailable
             ? ProviderRefreshStatus.Ok()
             : ProviderRefreshStatus.Failed(snapshot.StatusMessage ?? "Unavailable", degraded: true);

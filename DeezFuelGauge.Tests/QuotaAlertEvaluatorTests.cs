@@ -159,6 +159,37 @@ public sealed class QuotaAlertEvaluatorTests
     }
 
     [Fact]
+    public void Evaluate_claude_extra_usage_monthly_alerts_near_calendar_month_end()
+    {
+        var now = new DateTimeOffset(2026, 8, 28, 12, 0, 0, TimeSpan.Zero);
+        var monthEnd = new DateTimeOffset(2026, 9, 1, 0, 0, 0, TimeSpan.Zero);
+        var settings = new WidgetSettings
+        {
+            QuotaAlerts = new QuotaAlertSettings { CursorPlan = false },
+            Claude = new ProviderBillingSettings { ShowProLimits = true }
+        };
+        var snapshot = new UsageSnapshot
+        {
+            ClaudePro = ClaudeProSnapshot.FromUsage(
+                10,
+                20,
+                null,
+                null,
+                extraUsageIsAvailable: true,
+                extraUsagePercentRaw: 50,
+                extraUsageUsedUsd: 10m,
+                extraUsageLimitUsd: 20m,
+                extraUsageResetsAt: monthEnd)
+        };
+
+        var alerts = QuotaAlertEvaluator.Evaluate(snapshot, settings, now);
+
+        var alert = Assert.Single(alerts);
+        Assert.Equal("claude-extra-usage-monthly", alert.SourceId);
+        Assert.Equal("Claude monthly spend", alert.Label);
+    }
+
+    [Fact]
     public void Evaluate_uses_utc_month_fallback_when_billing_cycle_missing()
     {
         var now = new DateTimeOffset(2026, 6, 28, 12, 0, 0, TimeSpan.Zero);
@@ -203,17 +234,24 @@ public sealed class QuotaAlertEvaluatorTests
     }
 
     [Fact]
-    public void Evaluate_fal_balance_alerts_when_heuristic_at_or_above_threshold()
+    public void Evaluate_fal_balance_alerts_when_percent_at_or_above_threshold()
     {
         var settings = new WidgetSettings
         {
             Cursor = new ProviderBillingSettings { ShowCursorSource = false },
-            Fal = new ProviderBillingSettings { ShowProLimits = true },
+            Fal = new ProviderBillingSettings
+            {
+                ShowProLimits = true,
+                CreditBaselineUsd = 12,
+                LastObservedBalanceUsd = 12
+            },
             QuotaAlerts = new QuotaAlertSettings { MaxPercentUsed = 75, FalBalance = true }
         };
         var snapshot = new UsageSnapshot
         {
-            Fal = FalSnapshot.FromBalance(3)
+            Fal = FalSnapshot.FromBalance(
+                3,
+                percentUsed: PrepaidCreditBaselineTracker.Update(settings.Fal, 3))
         };
 
         var alerts = QuotaAlertEvaluator.Evaluate(snapshot, settings);
@@ -221,6 +259,35 @@ public sealed class QuotaAlertEvaluatorTests
         Assert.Single(alerts);
         Assert.Equal("fal-balance", alerts[0].SourceId);
         Assert.Equal("fal", alerts[0].ProviderKey);
+        Assert.Contains("$3.00 left", alerts[0].Message);
+    }
+
+    [Fact]
+    public void Evaluate_xai_balance_alerts_when_percent_at_or_above_threshold()
+    {
+        var settings = new WidgetSettings
+        {
+            Cursor = new ProviderBillingSettings { ShowCursorSource = false },
+            Xai = new ProviderBillingSettings
+            {
+                ShowProLimits = true,
+                CreditBaselineUsd = 12,
+                LastObservedBalanceUsd = 12
+            },
+            QuotaAlerts = new QuotaAlertSettings { MaxPercentUsed = 75, XaiBalance = true }
+        };
+        var snapshot = new UsageSnapshot
+        {
+            Xai = XaiSnapshot.FromBalance(
+                3,
+                percentUsed: PrepaidCreditBaselineTracker.Update(settings.Xai, 3))
+        };
+
+        var alerts = QuotaAlertEvaluator.Evaluate(snapshot, settings);
+
+        Assert.Single(alerts);
+        Assert.Equal("xai-balance", alerts[0].SourceId);
+        Assert.Equal("xai", alerts[0].ProviderKey);
         Assert.Contains("$3.00 left", alerts[0].Message);
     }
 
@@ -235,7 +302,9 @@ public sealed class QuotaAlertEvaluatorTests
         };
         var snapshot = new UsageSnapshot
         {
-            Fal = FalSnapshot.FromBalance(50)
+            Fal = FalSnapshot.FromBalance(
+                50,
+                percentUsed: PrepaidCreditBaselineTracker.Update(settings.Fal, 50))
         };
 
         var alerts = QuotaAlertEvaluator.Evaluate(snapshot, settings);

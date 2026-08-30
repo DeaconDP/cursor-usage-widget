@@ -207,4 +207,6 @@ public class ExternalSetupLauncher
     public void OpenOpenRouterManagementKeys() => OpenUrl("https://openrouter.ai/settings/management-keys");
 
     public void OpenFal() => OpenUrl("https://fal.ai/dashboard/keys");
+
+    public void OpenXai() => OpenUrl("https://console.x.ai");
 }

@@ -55,6 +55,7 @@ When compact (mini) mode is on, each enabled source shows as a short code plus p
 | **OZ** | OpenCode Zen |
 | **OG** | OpenCode Go |
 | **FA** | fal.ai credits |
+| **XA** | xAI credits |
 | **GB** | Grok Bot |
 
 ## Screenshots

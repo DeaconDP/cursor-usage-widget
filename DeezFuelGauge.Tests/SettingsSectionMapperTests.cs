@@ -119,6 +119,48 @@ public sealed class SettingsSectionMapperTests
         Assert.True(applied.Fal.ShowDetails);
     }
 
+    [Fact]
+    public void PopulateSections_includes_xai_section()
+    {
+        var sections = new List<ProviderSettingsSectionViewModel>();
+        var host = CreateViewModel();
+
+        SettingsSectionMapper.PopulateSections(sections, new WidgetSettings(), host);
+
+        var xai = sections.Single(s => s.ProviderId == SettingsExpandedProvider.Xai);
+        Assert.Equal("xAI", xai.Title);
+        Assert.Contains(xai.Sources, s => s.Kind == ProviderSourceKind.XaiCredits);
+    }
+
+    [Fact]
+    public void ApplyXai_round_trips_enable_details_and_team_id()
+    {
+        var sections = new List<ProviderSettingsSectionViewModel>();
+        var host = CreateViewModel();
+        var settings = new WidgetSettings
+        {
+            Xai = new ProviderBillingSettings
+            {
+                ShowProLimits = true,
+                ShowDetails = false,
+                WorkspaceId = "team-old"
+            }
+        };
+
+        SettingsSectionMapper.PopulateSections(sections, settings, host);
+        var xai = sections.Single(s => s.ProviderId == SettingsExpandedProvider.Xai);
+        xai.Sources.Single().IsEnabled = false;
+        xai.Sources.Single().ShowDetails = true;
+        xai.Sources.Single().WorkspaceId = "team-new";
+
+        var applied = new WidgetSettings();
+        SettingsSectionMapper.ApplyToSettings(sections, applied, SettingsExpandedProvider.Xai);
+
+        Assert.False(applied.Xai.ShowProLimits);
+        Assert.True(applied.Xai.ShowDetails);
+        Assert.Equal("team-new", applied.Xai.WorkspaceId);
+    }
+
     private static SettingsPanelViewModel CreateViewModel() =>
         new(
             new ProviderEasySetupService(),

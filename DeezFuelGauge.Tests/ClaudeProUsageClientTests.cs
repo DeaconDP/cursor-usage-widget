@@ -255,6 +255,151 @@ public sealed class ClaudeProUsageClientTests
         }
     }
 
+    [Fact]
+    public void ParseUsageResponse_reads_extra_usage_monthly_spend()
+    {
+        const string json = """
+            {
+              "five_hour": { "utilization": 0.1 },
+              "seven_day": { "utilization": 0.2 },
+              "extra_usage": {
+                "is_enabled": true,
+                "monthly_limit": 2000,
+                "used_credits": 4693,
+                "utilization": 2.35,
+                "currency": "USD"
+              }
+            }
+            """;
+
+        using var document = JsonDocument.Parse(json);
+        var snapshot = ClaudeProUsageClient.ParseUsageResponse(document.RootElement);
+
+        Assert.True(snapshot.ExtraUsageIsAvailable);
+        Assert.Equal(234.65, snapshot.ExtraUsagePercentRaw, 1);
+        Assert.Equal(100, snapshot.ExtraUsagePercentUsed, 1);
+        Assert.Equal(46.93m, snapshot.ExtraUsageUsedUsd);
+        Assert.Equal(20m, snapshot.ExtraUsageLimitUsd);
+        Assert.Contains("$46.93 / $20 mo", snapshot.DetailLabel);
+    }
+
+    [Fact]
+    public void ParseUsageResponse_ignores_disabled_extra_usage()
+    {
+        const string json = """
+            {
+              "five_hour": { "utilization": 0.1 },
+              "extra_usage": { "is_enabled": false, "monthly_limit": 2000, "used_credits": 1000 }
+            }
+            """;
+
+        using var document = JsonDocument.Parse(json);
+        var snapshot = ClaudeProUsageClient.ParseUsageResponse(document.RootElement);
+
+        Assert.False(snapshot.ExtraUsageIsAvailable);
+    }
+
+    [Fact]
+    public void ParseOverageSpendLimit_reads_monthly_credit_limit_and_blocked_state()
+    {
+        const string json = """
+            {
+              "is_enabled": true,
+              "monthly_credit_limit": 1951,
+              "used_credits": 1951,
+              "out_of_credits": true,
+              "disabled_until": "2026-08-26T14:40:00Z"
+            }
+            """;
+
+        using var document = JsonDocument.Parse(json);
+        var overage = ClaudeProUsageClient.ParseOverageSpendLimit(document.RootElement);
+
+        Assert.NotNull(overage);
+        Assert.Equal(19.51m, overage.Value.LimitUsd);
+        Assert.Equal(19.51m, overage.Value.UsedUsd);
+        Assert.True(overage.Value.OutOfCredits);
+        Assert.Equal(100, overage.Value.PercentRaw, 1);
+    }
+
+    [Fact]
+    public void MergeExtraUsage_prefers_overage_endpoint_values()
+    {
+        var baseSnapshot = ClaudeProSnapshot.FromUsage(10, 20, null, null);
+        var overage = new ClaudeExtraUsageData(
+            IsEnabled: true,
+            UsedUsd: 46.93m,
+            LimitUsd: 20m,
+            PercentRaw: 235,
+            OutOfCredits: true,
+            DisabledUntil: DateTimeOffset.Parse("2026-08-26T14:40:00Z"));
+
+        var merged = ClaudeProUsageClient.MergeExtraUsage(baseSnapshot, overage);
+
+        Assert.True(merged.ExtraUsageIsAvailable);
+        Assert.Equal(235, merged.ExtraUsagePercentRaw, 1);
+        Assert.True(merged.ExtraUsageOutOfCredits);
+        Assert.Equal("Monthly spend limit reached", merged.StatusMessage);
+    }
+
+    [Fact]
+    public async Task FetchAsync_enriches_session_usage_from_overage_endpoint()
+    {
+        var handler = new StubHttpHandler(request =>
+        {
+            if (request.RequestUri!.AbsolutePath == "/api/account")
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        """{"memberships":[{"organization":{"uuid":"org-1"}}]}""",
+                        Encoding.UTF8,
+                        "application/json")
+                };
+            }
+
+            if (request.RequestUri.AbsolutePath.EndsWith("/overage_spend_limit", StringComparison.Ordinal))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        """
+                        {
+                          "is_enabled": true,
+                          "monthly_credit_limit": 2000,
+                          "used_credits": 1000,
+                          "out_of_credits": false
+                        }
+                        """,
+                        Encoding.UTF8,
+                        "application/json")
+                };
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    """{"five_hour":{"utilization":0.3},"seven_day":{"utilization":0.4}}""",
+                    Encoding.UTF8,
+                    "application/json")
+            };
+        });
+
+        var client = new ClaudeProUsageClient(
+            new HttpClient(handler),
+            new ClaudeProAuthResolver(
+                claudeCodeReader: () => null,
+                savedSessionReader: _ => "pasted-session-key"));
+
+        var settings = new ProviderBillingSettings();
+        var snapshot = await client.FetchAsync(settings);
+
+        Assert.True(snapshot.ExtraUsageIsAvailable);
+        Assert.Equal(50, snapshot.ExtraUsagePercentRaw, 1);
+        Assert.Equal(10m, snapshot.ExtraUsageUsedUsd);
+        Assert.Equal(20m, snapshot.ExtraUsageLimitUsd);
+    }
+
     private sealed class StubHttpHandler : HttpMessageHandler
     {
         private readonly Func<HttpRequestMessage, HttpResponseMessage> _handler;

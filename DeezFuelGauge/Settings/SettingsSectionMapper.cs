@@ -21,6 +21,7 @@ internal static class SettingsSectionMapper
             sections.Add(BuildOpenRouterSection(settings, host));
         sections.Add(BuildOpenCodeSection(settings, host));
         sections.Add(BuildFalSection(settings, host));
+        sections.Add(BuildXaiSection(settings, host));
         sections.Add(BuildDiskSection(settings, host));
         sections.Add(BuildHardwareSection(settings, host));
 
@@ -63,6 +64,9 @@ internal static class SettingsSectionMapper
                     break;
                 case SettingsExpandedProvider.Fal:
                     ApplyFal(section, settings);
+                    break;
+                case SettingsExpandedProvider.Xai:
+                    ApplyXai(section, settings);
                     break;
                 case SettingsExpandedProvider.Disk:
                     ApplyDisk(section, settings);
@@ -360,7 +364,8 @@ internal static class SettingsSectionMapper
         credits.ApiKeyWatermark = host.FalApiKeyWatermark;
         credits.HasApiKeySaved = host.HasFalApiKeySaved;
         credits.AdvancedHint =
-            "Admin API key from fal.ai/dashboard/keys. Shows prepaid credit balance remaining.";
+            "Admin API key from fal.ai/dashboard/keys (ADMIN scope, not API). Keys do not expire — " +
+            "create a new one if revoked. Select the correct personal or team account before creating the key.";
         credits.ShowAdvancedSection = settings.Fal.ShowProLimits;
 
         var section = new ProviderSettingsSectionViewModel
@@ -368,6 +373,43 @@ internal static class SettingsSectionMapper
             ProviderId = SettingsExpandedProvider.Fal,
             Title = "fal.ai",
             MasterEnable = settings.Fal.ShowProLimits,
+            SummaryStatus = credits.Status
+        };
+        section.Sources.Add(credits);
+        return section;
+    }
+
+    private static ProviderSettingsSectionViewModel BuildXaiSection(
+        WidgetSettings settings,
+        SettingsPanelViewModel host)
+    {
+        var credits = CreateSource(
+            ProviderSourceKind.XaiCredits,
+            "Credits",
+            settings.Xai.ShowProLimits,
+            settings.Xai.ShowDetails,
+            settings.Xai.LastConnectionStatus ?? "",
+            showConnect: true,
+            showTest: true);
+        credits.SupportsAdvanced = true;
+        // Keep field visible after save so Clear / replace still work.
+        credits.ShowApiKeyField = settings.Xai.ShowProLimits;
+        credits.ApiKeyWatermark = host.XaiApiKeyWatermark;
+        credits.HasApiKeySaved = host.HasXaiApiKeySaved;
+        credits.ShowWorkspaceField = settings.Xai.ShowProLimits;
+        credits.WorkspaceWatermark = "Team UUID (optional)";
+        credits.WorkspaceId = settings.Xai.WorkspaceId ?? "";
+        credits.AdvancedHint =
+            "Requires a Management key from console.x.ai → Settings → Management Keys. " +
+            "Regular API / inference keys (API Keys page) return “invalid bearer token”. " +
+            "Team UUID is usually auto-detected; if Connect fails, paste the UUID from team settings — not “default”.";
+        credits.ShowAdvancedSection = settings.Xai.ShowProLimits;
+
+        var section = new ProviderSettingsSectionViewModel
+        {
+            ProviderId = SettingsExpandedProvider.Xai,
+            Title = "xAI",
+            MasterEnable = settings.Xai.ShowProLimits,
             SummaryStatus = credits.Status
         };
         section.Sources.Add(credits);
@@ -592,6 +634,16 @@ internal static class SettingsSectionMapper
         settings.Fal.ShowProLimits = credits.IsEnabled;
         settings.Fal.ShowDetails = credits.ShowDetails;
         settings.Fal.LastConnectionStatus = NullIfEmpty(credits.Status);
+        section.MasterEnable = credits.IsEnabled;
+    }
+
+    private static void ApplyXai(ProviderSettingsSectionViewModel section, WidgetSettings settings)
+    {
+        var credits = section.Sources.Single();
+        settings.Xai.ShowProLimits = credits.IsEnabled;
+        settings.Xai.ShowDetails = credits.ShowDetails;
+        settings.Xai.WorkspaceId = NullIfEmpty(credits.WorkspaceId);
+        settings.Xai.LastConnectionStatus = NullIfEmpty(credits.Status);
         section.MasterEnable = credits.IsEnabled;
     }
 

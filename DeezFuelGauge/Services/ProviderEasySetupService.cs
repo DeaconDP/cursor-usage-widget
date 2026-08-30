@@ -9,6 +9,7 @@ public sealed class ProviderEasySetupService
     private readonly AntigravityUsageClient _antigravity;
     private readonly OpenRouterUsageClient _openRouter;
     private readonly FalUsageClient _fal;
+    private readonly XaiUsageClient _xai;
     private readonly GrokBotUsageClient? _grokBot;
     private readonly ExternalSetupLauncher _launcher;
     private readonly Func<CursorTokens> _cursorTokenReader;
@@ -22,6 +23,7 @@ public sealed class ProviderEasySetupService
         AntigravityUsageClient? antigravity = null,
         OpenRouterUsageClient? openRouter = null,
         FalUsageClient? fal = null,
+        XaiUsageClient? xai = null,
         GrokBotUsageClient? grokBot = null,
         ExternalSetupLauncher? launcher = null,
         Func<CursorTokens>? cursorTokenReader = null,
@@ -34,6 +36,7 @@ public sealed class ProviderEasySetupService
         _antigravity = antigravity ?? new AntigravityUsageClient();
         _openRouter = openRouter ?? new OpenRouterUsageClient();
         _fal = fal ?? new FalUsageClient();
+        _xai = xai ?? new XaiUsageClient();
         _grokBot = grokBot;
         _launcher = launcher ?? new ExternalSetupLauncher();
         _cursorTokenReader = cursorTokenReader ?? CursorTokenReader.Read;
@@ -194,6 +197,27 @@ public sealed class ProviderEasySetupService
 
         var status = await _fal.TestConnectionAsync(apiKey, cancellationToken);
         settings.Fal.LastConnectionStatus = status;
+        return new EasySetupResult(status);
+    }
+
+    public async Task<EasySetupResult> SetupXaiAsync(
+        WidgetSettings settings,
+        CancellationToken cancellationToken = default)
+    {
+        settings.Xai.ShowProLimits = true;
+        settings.Xai.ShowDetails = true;
+
+        var apiKey = CredentialStore.Retrieve(settings.Xai.CredentialId);
+        if (string.IsNullOrWhiteSpace(apiKey))
+        {
+            _launcher.OpenXai();
+            const string message = "Paste your xAI Management API key in Advanced (team UUID optional for team-scoped keys).";
+            settings.Xai.LastConnectionStatus = message;
+            return new EasySetupResult(message, OpenedExternalUrl: true);
+        }
+
+        var status = await _xai.TestConnectionAsync(apiKey, settings.Xai.WorkspaceId, cancellationToken);
+        settings.Xai.LastConnectionStatus = status;
         return new EasySetupResult(status);
     }
 
