@@ -5,8 +5,23 @@ namespace DeezFuelGauge.Services;
 
 public static class ClaudeOAuthTokenStore
 {
-    public static void Persist(ProviderBillingSettings settings, ClaudeOAuthToken token)
+    public static void Persist(
+        ProviderBillingSettings settings,
+        ClaudeOAuthToken token,
+        ClaudeOAuthToken? previous = null)
     {
+        var previousRefresh = previous?.RefreshToken;
+        if (string.IsNullOrWhiteSpace(token.RefreshToken)
+            && !string.IsNullOrWhiteSpace(previousRefresh))
+        {
+            token = new ClaudeOAuthToken
+            {
+                AccessToken = token.AccessToken,
+                RefreshToken = previousRefresh,
+                ExpiresAtUnixMs = token.ExpiresAtUnixMs
+            };
+        }
+
         var json = JsonSerializer.Serialize(token);
         CredentialStore.Replace(
             "claude-pro-oauth",

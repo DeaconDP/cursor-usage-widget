@@ -328,7 +328,7 @@ public sealed class ClaudeProUsageClient : IDisposable
             throw new ClaudeProUsageException(ex.Message);
         }
 
-        ClaudeOAuthTokenStore.Persist(settings, refreshed);
+        ClaudeOAuthTokenStore.Persist(settings, refreshed, token);
         return await FetchOAuthUsageAsync(refreshed.AccessToken, cancellationToken);
     }
 

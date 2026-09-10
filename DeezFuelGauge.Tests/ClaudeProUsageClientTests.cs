@@ -227,6 +227,8 @@ public sealed class ClaudeProUsageClientTests
             RefreshToken = "old-refresh",
             ExpiresAtUnixMs = DateTimeOffset.UtcNow.AddMinutes(-5).ToUnixTimeMilliseconds()
         };
+        ClaudeOAuthTokenStore.Persist(settings, expiredToken);
+        var existingId = settings.ProOAuthCredentialId;
 
         var httpClient = new HttpClient(handler);
         var client = new ClaudeProUsageClient(
@@ -244,6 +246,7 @@ public sealed class ClaudeProUsageClientTests
             Assert.True(snapshot.IsAvailable);
             Assert.Equal(40, snapshot.SessionPercentUsed, 1);
             Assert.Equal(60, snapshot.WeeklyPercentUsed, 1);
+            Assert.Equal(existingId, settings.ProOAuthCredentialId);
 
             var persisted = ClaudeOAuthTokenStore.Retrieve(settings.ProOAuthCredentialId);
             Assert.NotNull(persisted);
@@ -251,7 +254,7 @@ public sealed class ClaudeProUsageClientTests
         }
         finally
         {
-            CredentialStore.Delete(settings.ProOAuthCredentialId);
+            ClaudeOAuthTokenStore.Clear(settings);
         }
     }
 

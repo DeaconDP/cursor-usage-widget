@@ -65,13 +65,14 @@ public sealed class ClaudeProAuthResolver
 
     public ClaudeProAuthResult Resolve(ProviderBillingSettings settings)
     {
+        string? expiredClaudeCodeMessage = null;
         var oauth = _claudeCodeReader();
         if (oauth is not null)
         {
-            if (oauth.IsExpired)
-                return ClaudeProAuthResult.Failed("Claude Code token expired — run claude login again");
+            if (!oauth.IsExpired)
+                return ClaudeProAuthResult.FromOAuth(oauth.AccessToken);
 
-            return ClaudeProAuthResult.FromOAuth(oauth.AccessToken);
+            expiredClaudeCodeMessage = "Claude Code token expired — run claude login again";
         }
 
         var appToken = _appOAuthReader(settings.ProOAuthCredentialId);
@@ -82,7 +83,8 @@ public sealed class ClaudeProAuthResolver
         if (!string.IsNullOrWhiteSpace(savedSession))
             return ClaudeProAuthResult.FromSavedSession(savedSession);
 
-        return ClaudeProAuthResult.Failed("Sign in with Claude in Settings, or run 'claude login'");
+        return ClaudeProAuthResult.Failed(
+            expiredClaudeCodeMessage ?? "Sign in with Claude in Settings, or run 'claude login'");
     }
 
     public static void PersistSessionKey(ProviderBillingSettings settings, string sessionCookie)

@@ -49,7 +49,7 @@ public sealed class ClaudeProAuthResolverTests
     }
 
     [Fact]
-    public void Resolve_returns_expired_message_when_claude_code_token_expired()
+    public void Resolve_uses_saved_session_when_claude_code_token_expired()
     {
         var resolver = new ClaudeProAuthResolver(
             claudeCodeReader: () => new ClaudeCodeOAuthCredential { AccessToken = "oauth-token", ExpiresAt = 0 },
@@ -57,8 +57,38 @@ public sealed class ClaudeProAuthResolverTests
 
         var result = resolver.Resolve(new ProviderBillingSettings());
 
+        Assert.Equal(ClaudeProAuthSource.SavedSession, result.Source);
+        Assert.Equal("saved-session", result.SessionCookie);
+    }
+
+    [Fact]
+    public void Resolve_returns_expired_message_when_claude_code_token_expired_and_no_fallback()
+    {
+        var resolver = new ClaudeProAuthResolver(
+            claudeCodeReader: () => new ClaudeCodeOAuthCredential { AccessToken = "oauth-token", ExpiresAt = 0 },
+            appOAuthReader: _ => null,
+            savedSessionReader: _ => null);
+
+        var result = resolver.Resolve(new ProviderBillingSettings());
+
         Assert.False(result.HasAuth);
         Assert.Contains("claude login", result.FailureMessage, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Resolve_uses_app_oauth_when_claude_code_token_expired()
+    {
+        var appToken = new ClaudeOAuthToken { AccessToken = "app-oauth-token", ExpiresAtUnixMs = long.MaxValue };
+        var resolver = new ClaudeProAuthResolver(
+            claudeCodeReader: () => new ClaudeCodeOAuthCredential { AccessToken = "oauth-token", ExpiresAt = 0 },
+            appOAuthReader: _ => appToken,
+            savedSessionReader: _ => "saved-session");
+
+        var result = resolver.Resolve(new ProviderBillingSettings());
+
+        Assert.Equal(ClaudeProAuthSource.AppOAuth, result.Source);
+        Assert.Equal("app-oauth-token", result.OAuthAccessToken);
+        Assert.Same(appToken, result.AppOAuthToken);
     }
 
     [Fact]
