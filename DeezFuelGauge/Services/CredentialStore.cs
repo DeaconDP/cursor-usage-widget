@@ -73,6 +73,22 @@ public static class CredentialStore
         }
     }
 
+    public static string Upsert(string provider, string? existingId, string secret)
+    {
+        if (string.IsNullOrWhiteSpace(secret))
+            throw new ArgumentException("Secret cannot be empty.", nameof(secret));
+
+        if (string.IsNullOrWhiteSpace(existingId))
+            return Store(provider, secret);
+
+        Directory.CreateDirectory(CredentialsDir);
+        var path = GetPath(existingId);
+        var protectedBytes = CredentialProtector.Protect(Encoding.UTF8.GetBytes(secret));
+        File.WriteAllBytes(path, protectedBytes);
+        MemoryCache[existingId] = secret;
+        return existingId;
+    }
+
     public static void Replace(string provider, string? existingId, string newSecret, Action<string?> setCredentialId)
     {
         if (string.IsNullOrWhiteSpace(newSecret))
@@ -82,10 +98,7 @@ public static class CredentialStore
             return;
         }
 
-        if (!string.IsNullOrWhiteSpace(existingId))
-            Delete(existingId);
-
-        setCredentialId(Store(provider, newSecret));
+        setCredentialId(Upsert(provider, existingId, newSecret));
     }
 
     private static string GetPath(string credentialId)
